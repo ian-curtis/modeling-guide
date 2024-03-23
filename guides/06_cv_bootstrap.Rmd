@@ -1,0 +1,7 @@
+---
+title: "Simple and Linear Regression"
+author: "Ian Curtis"
+date: "2024-03-12"
+output: html_document
+---
+

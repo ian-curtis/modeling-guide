@@ -1,0 +1,220 @@
+---
+title: "01: Exploratory Data Analysis and Cleaning"
+author: "Ian Curtis"
+date: "2024-03-12"
+output: html_document
+---
+
+# Welcome
+
+Hey! Welcome to my modeling guide with R. Over the course of the next few guides, you'll get to see a few modeling concepts in action. The dataset used here was [downloaded from Kaggle](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/data). It is unclear if this dataset was generated randomly or is based on real sales data; however, it has plenty of variables for us to explore.
+
+# This Guide
+
+The guide you are reading dives into a generalized exploratory data analysis (EDA) of the dataset. Before we can jump to modeling, we have to make sure we have a good understanding of what's going on in the dataset. It's not a good idea to jump right into inference; if we can't explain what the variables are trying to say, we won't be able to provide any insight. Moreover, we may need to do some data cleaning and we also may have questions to bring back to the data provider.
+
+# Exploring the Data
+
+## Preparing / Cleaning Data
+
+Let's begin importing some packages and reading in the dataset. I rely heavily on the `tidyverse` family of packages and draw on other packages as needed. Here, we will be using the `lubridate` package to work with dates and times.
+
+```{r load-packages}
+library(tidyverse)
+library(lubridate)
+retail <- read_csv("data/retail_raw.csv")
+head(retail)
+```
+
+```{r echo = FALSE}
+my_theme <- theme()
+```
+
+
+It looks like we have a dataset that has 1000 observations with 17 variables. This is not a ton of observations but is enough to present the modeling concepts. 
+
+Now that this is done, I took a look at the variable names and the kinds of variables we have in this dataset. For this, we can use the `summary()` function which will give us a brief understanding of the variables.
+
+```{r summary}
+summary(retail)
+```
+
+At this point, I'm just looking at general features. I'm making sure that each of the character variables have length 1000 (which is how many rows we have) and that the numerical summaries have values that make sense (for example the `Rating` variable has a max of 10 which is logical). I'm also looking at any adjustments that I need to make to the data to make it easier to work with. Of course, to remain ethical analysts, we should never "edit" the data. Here, I'm talking about editing variable names, ensuring that each variable has the correct type (e.g., the `Date` variable should be encoded as a date), and checking for input errors.
+
+After looking at the summary, I think I want to take the time to rename the variables. This isn't always a necessary step, but since I will be using this data over the course of multiple guides so I want to make sure I am comfortable with it. The code below:
+
+1. Renames a handful of the variables using my preferred style: snake_case
+2. Removes several variables that [were miscalculated](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/discussion/359987). The `City` variable is also removed as the same information can be conveyed with the Store ID and helps promote anonymity.
+3. Edits several variables.
+  a. Coerces the `date` variable into a date object
+  b. Turns the `store` and `qty` variables into a factor (for proper grouping later on)
+  c. Calculates the subtotal of a purchase before tax by dividing the total of the purchase by 1.05 (5% tax)
+  d. Calculates the unit price of an item by dividing the subtotal by the quantity.
+
+```{r prep-data}
+retail <- retail %>% 
+  rename(id = `Invoice ID`,
+         store = Branch,
+         customer_type = `Customer type`,
+         gender = Gender,
+         product_class = `Product line`,
+         qty = Quantity,
+         date = Date,
+         time = Time,
+         pay_method = Payment,
+         rating = Rating,
+         total = Total) %>% 
+  select(-c(`Tax 5%`, cogs, `gross margin percentage`, `gross income`, `Unit price`, City)) %>% 
+  mutate(date = mdy(date),
+         store = factor(store),
+         subtotal = total / 1.05,
+         unit_price = subtotal / qty,
+         qty = factor(qty)
+         )
+head(retail)
+```
+
+# Basic Exploratory Data Analysis
+
+Specific data explorations will occur within each respective guide. However, I do think it is important to look at some of the variables to anticipate any potential problems we might have. It also helps to get a general *visual* understanding of what we are working with here.
+
+Let's start by creating some basic one-variable plots! I'll follow each plot with a few things that I notice and that I may want to pay attention to later.
+
+```{r eda-store}
+retail %>% ggplot(aes(store, label = store)) +
+  geom_bar(fill = "#099392") +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
+  labs(x = "Store ID",
+       y = "Count",
+       title = "Counts of Each Store Name")
+```
+
+* There are three stores and no missing values
+* There is not an equal number of stores represented (Store A > Store B > Store C)
+* All stores have at least 300 observations which is decent
+
+
+```{r eda-cust-type}
+retail %>% ggplot(aes(customer_type, label = customer_type)) +
+  geom_bar(fill = "#099392") +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
+  labs(x = "Customer Type",
+       y = "Count",
+       title = "Counts of Each Customer Type")
+```
+
+* There are two customer types and no missing values
+* There is not an equal number of customers in each type (501 vs. 499)
+  * Perhaps this dataset was created with the intention to have and equal-ish number of members vs. non-members. By my own intuition, most stores would seem to have more non-members than members.
+  
+```{r eda-gender}
+retail %>% ggplot(aes(gender, label = gender)) +
+  geom_bar(fill = "#099392") +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
+  labs(x = "Gender",
+       y = "Count",
+       title = "Counts of Each Gender",
+       subtitle = "Represented by This Dataset")
+```
+
+* There are two genders here and no missing values
+* There is not an equal number of customers in each gender represented (501 vs. 499)
+
+```{r eda-class}
+retail %>% ggplot(aes(product_class, label = product_class)) +
+  geom_bar(fill = "#099392") +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
+  labs(x = "Product Class",
+       y = "Count",
+       title = "Counts of Each Product Class") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2))
+```
+
+* There are six different product classes and no missing values
+* There are not an equal number of items across the classes
+* Each class has at least 150 items
+* The plot may contain items that have been counted twice (e.g., if two customers purchased the same item in separate transactions)
+
+```{r eda-qty}
+retail %>% ggplot(aes(qty)) +
+  geom_bar(fill = "#099392") +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
+  labs(x = "Number of Items",
+       title = "Distribution of The Quantity of an Item Sold",
+       subtitle = "In a Single Transaction")
+```
+
+* A histogram might be more applicable here; however there are only 10 values in the `qty` variable
+  * So, this dataset contains items that were sold in a group of, at minimum, 1 and, at maximum, 10.
+* There are not an equal number of items in each quantity group
+  * E.g., in 119 different transactions, 10 of an item was sold 
+
+
+```{r eda-total}
+retail %>% ggplot(aes(total)) +
+  geom_histogram(fill = "#099392", color = "black", binwidth = 50) +
+  labs(x = "Transaction Total",
+       y = "Count",
+       title = "Distribution of Transaction Totals")
+```
+
+
+* The distribution is skewed right
+* Most of the transaction totals were less than $400
+* There may be a few transactions that were $0 (or super small)
+  * This is worth investigating later
+
+
+```{r eda-pay-method}
+retail %>% ggplot(aes(pay_method, label = pay_method)) +
+  geom_bar(fill = "#099392") +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
+  labs(x = "Payment Method",
+       y = "Count",
+       title = "Counts of Each Payment Method")
+```
+
+
+* There are three different payment methods and no missing values
+* There is not an equal number of payment methods
+
+```{r eda-rating}
+retail %>% ggplot(aes(rating)) +
+  geom_histogram(fill = "#099392", color = "black", binwidth = 0.5) +
+  labs(x = "Rating",
+       y = "Count",
+       title = "Distribution of Transaction Rating") +
+  scale_x_continuous(breaks = seq(0, 10, 1))
+```
+
+
+* The distribution is roughly uniform with lower counts on the tails (ratings of 4 and 10) and has no missing values
+* No rating exceeds 10 or falls below 4
+
+```{r eda-unit-price}
+retail %>% ggplot(aes(unit_price)) +
+  geom_histogram(fill = "#099392", color = "black", binwidth = 5) +
+  labs(x = "Price",
+       y = "Count",
+       title = "Distribution of Unit Price",
+       subtitle = "The Price of a Single Item")
+```
+
+
+* The distribution is very roughly uniform with lower counts on the left tail (price less than 10) and has no missing values
+* The dataset page indicates the price is in dollars but it is unclear which country's dollar.
+
+The last step here will be to export our edited dataset so we can import it into other guides later on.
+
+```{r export}
+write_csv(retail, "data/retail_clean.csv")
+```
+
+
+# Wrap Up
+
+That will concludes this preliminary guide on preparing our data! Over the course of the next guides, we will explore the data a little bit more and create some predictive models.
+
+
+
+
