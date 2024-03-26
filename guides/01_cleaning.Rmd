@@ -7,7 +7,7 @@ output: html_document
 
 # Welcome
 
-Hey! Welcome to my modeling guide with R. Over the course of the next few guides, you'll get to see a few modeling concepts in action. The dataset used here was [downloaded from Kaggle](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/data). It is unclear if this dataset was generated randomly or is based on real sales data; however, it has plenty of variables for us to explore.
+Hey there! Welcome to my Modeling Guide with R. Over the course of the next few guides, you'll get to see a few modeling concepts in action. The dataset used here was [downloaded from Kaggle](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/data). It is unclear if this dataset was generated randomly or is based on real sales data; however, it has plenty of variables for us to explore.
 
 # This Guide
 
@@ -24,10 +24,6 @@ library(tidyverse)
 library(lubridate)
 retail <- read_csv("data/retail_raw.csv")
 head(retail)
-```
-
-```{r echo = FALSE}
-my_theme <- theme()
 ```
 
 
