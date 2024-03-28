@@ -1,0 +1,356 @@
+---
+title: "Simple and Multiple Linear Regression"
+author: "Ian Curtis"
+date: "2024-03-12"
+output: html_document
+---
+
+# Welcome
+
+Hey there! This is the second guide in my Modeling Guide with R series. In the previous guide, we performed some preliminary explorations on our dataset and took a look at a few of the variables. We cleaned the dataset up a bit and exported it so we could read it again in later guides.
+
+This page will focus on both simple and multiple linear regression. Although, I cannot cover all of the details and fine use cases of linear regression, we will explore some of the key ideas to focus on when creating and analyzing a linear regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. In both simple and linear regression, we'll use train/test validation and we'll also look at several candidate models.
+
+We will be using the same dataset for both the simple and multiple regression cases so let's get that set up first. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation and `GGally` to make a scatterplot matrix.
+
+The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
+
+I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
+
+```{r load-items}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+
+retail <- read_csv(here::here("data/retail_clean.csv"))
+
+set.seed(52319)
+retail_split <- initial_split(retail, prop = .8, strata = store)
+
+train <- training(retail_split)
+test <- testing(retail_split)
+```
+
+Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
+
+# Simple Linear Regression (SLR)
+
+Although I'll avoid any complex math throughout this guide, it is important to think about how regression works. The formula for simple linear regression for a population is
+
+$$
+y = \beta_0 + \beta_1 x_1 + \varepsilon
+$$
+
+which states that we can represent the relationship between our predictor variable and our response variable as a straight line plus some natural error ($\varepsilon$). The problem is, we don't know the information about our population (i.e., we don't have data from all transactions from all stores). Instead, we have a subset of that data (some transactions froms ome stores) and are looking to predict the population values using our sample. As a result, we are creating a model of the form
+
+$$
+\hat{y} = \hat{\beta_0} + \hat{\beta_1} x_1 
+$$
+There is a different here. First, we've lost the error term since we are now in prediction mode (there is no error since we know the data we collected). You also now see hats above a few of the values. This indicates that they are estimates of the true values.
+
+## Requirements
+
+When might we want to use SLR? Well, first we need to make sure we have the correct variable types: 
+
+* The response variable (the variable we are predicting) must be continuous.
+* The predictor variable (the variable we are using to predict) can be either continuous or categorical with two levels.
+* We only get one predictor variable and one response variable.
+
+Second, we have to meet certain criteria. See, simple linear regression can be somewhat limiting as it requires us to make certain assumptions about our data and the population we are hoping to model due to the mathematical formulas and matrix algebra used. This is what we should pay attention to:
+
+* The relationship between the predictor variable and the response variable(s) should be linear
+* The errors of our predictions should be approximately normally distributed
+* Our predictor variable(s) should not be correlated with each other (not a problem in SLR)
+* There should be a constant variability in our errors
+* Our errors should be independent (we will not focus on this here)
+
+These will be explored later on when we investigate our variables.
+
+## Selecting Variables
+
+Given all of that information, let's choose the variables we want to use in the model. Suppose we want to have a way to predict the rating of a transaction. The `rating` variable is continuous so it is acceptable to use as a response variable. To try and predict `rating`, we will consider a few candidate models (each with one predictor variable). Let's start with `total`, and `unit_price` as possible predictors.
+
+At this point, it's a good idea to write down your predictions about what might happen. This is important as you want to make sure you don't create a prediction based on your results so you don't create any bias. At this point, I am thinking that `unit_price` will have the most effect on `rating` since I think that when items cost more, people are more likely to be grumpy and give a lower rating.
+
+Using the formula above, we can create two possible models that we want to use to predict `rating`:
+
+$$
+\widehat{\text{rating}} = \hat{\beta_0} + \hat{\beta_1} * \text{total}
+$$
+
+$$
+\widehat{\text{rating}} = \hat{\beta_0} + \hat{\beta_1} * \text{unit_price}
+$$
+In each case, we are trying to find the values for $\hat{\beta_0}$ and $\hat{\beta_1}$ using the respective variable.
+
+## Building the Model
+
+Let's build the model! We will use the `tidymodels` family of packages for this. We first set up the regression engine, then fit the models with our data. Based on the work done in the first guide, we saw that `total` has some right skew to it due to some outliers to the right. As a result, we are going to take the log of `total`.
+
+```{r model}
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+slr_mod_price <- lm_spec %>% 
+  fit(rating ~ unit_price, data = train)
+
+slr_mod_total <- lm_spec %>% 
+  fit(rating ~ log(total), data = train)
+```
+
+Above, I fit two different models, one with `unit_price` and one with `total`. Let's take a look at the output for both of them.
+
+```{r slr-output}
+tidy(slr_mod_price)
+tidy(slr_mod_total)
+```
+
+We can use this output to create a regression line equation using the above formulas:
+
+$$
+\widehat{\text{rating}} = 6.99 + 0.000548 * \text{unit price}
+$$
+
+$$
+\widehat{\text{rating}} = 7.06 - 0.0177 * \log{\text{(total)}}
+$$
+In other words, because the slopes for both of the lines are very small, we have very little evidence of a linear relationship between `rating` and both `unit_price` and the log of `total`.
+
+
+## Assessing the Model
+
+Let's see how the models perform! My guess is not very well based on the information so far.
+
+We can get a good idea of this by looking at $R^2$, or the proportion of the variance in `rating` we have explained.
+
+```{r r2}
+glance(slr_mod_price)
+glance(slr_mod_total)
+```
+
+When we use `unit_price`, we can explain 0.00711% of the variance in `rating` and with the log of `total`, 0.0088%. Not so good! Due to the similar $R^2$ values, I will be finishing the SLR section with only one model: the one with `log(total)`.
+
+We can run the model on the testing dataset we created earlier to see how accurate the model is.
+
+```{r pred-test}
+test_aug <- augment(slr_mod_total, new_data = test)
+head(test_aug)
+```
+
+This has created two new columns to our dataset: `.pred` and `.resid`. Now we have our predictions and errors! 
+
+```{r}
+mean(test_aug$.resid)
+```
+
+It looks like, on average, we over-predict `rating` by about 0.225 points.
+
+Before making any final conclusions, let's look at our assumptions.
+
+### Linearity
+
+First, can we assume linearity between the response and the predictor?
+
+```{r unit-price-rating}
+train %>% 
+  ggplot(aes(x = log(total), y = rating)) +
+  geom_point() +
+  labs(title = "Transaction Rating vs. Transaction Total",
+       x = "Log Total ($)",
+       y = "Rating")
+```
+
+Well, this is a great example of how most real life data is not going to be perfectly linear. This data certainly shows no linear patter; in fact, this looks more like a random scatter with no pattern than anything. I wouldn't say that we have satisfied this condition. It also doesn't quite make sense to run a regression analysis with these variables as there does not appear to be a relationship at all between the two.
+
+```{r correlation}
+cor(train$rating, log(train$total)) %>% 
+  round(5)
+```
+
+As we can see, the correlation is very close to zero indicating that there is low evidence of a linear relationship between `rating` and `total`.
+
+We can also check this with our errors. First, we need to calculate the errors for the training dataset (we previously found the errors for the testing dataset). Then we can plot the errors versus the predicted values.
+
+```{r}
+train_aug <- augment(slr_mod_total, new_data = train)
+
+ggplot(data = train_aug, aes(x = .pred, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  xlab("Fitted values") +
+  ylab("Residuals")
+```
+
+We are looking for a random scatter of points (and not a pattern). We do see a random scatter here which is a good sign!
+
+### Constant Variability of Errors
+
+Using the above plot, do we see any curvature around the dashed line? Are the errors more spread out (vertically) at some points than others? I do not see evidence to assume this. At nearly every fitted value, the residuals span from about -2.5 to 2.5.
+
+### Normal Errors
+
+We can make a histogram of the errors to check for the normality assumption.
+
+```{r}
+ggplot(data = train_aug, aes(x = .resid)) +
+  geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
+  xlab("Residuals")
+```
+
+I would say we meet this assumption as well!
+
+## Wrap Up
+
+All in all, simple linear regression was not a good model to choose for predicting `rating`. With only one variable, we don't get a lot of information to help us predict `rating` accurately. Moreover, we can't be certain that we meet the linearity assumption so our results might be in question. My original prediction was not correct as both `unit_price` and `total` alone do not tell us much about `rating`.
+
+# Multiple Linear Regression
+
+Above, we weren't able to predict `rating` with one variable alone. What if we could use multiple variables in regression model? Maybe then we can explain more variance in `rating`. 
+
+## Requirements
+
+When can we use multiple linear regression (MLR)?
+
+* The response variable (the variable we are predicting) must be continuous.
+* The predictor variable (the variable we are using to predict) can be either continuous or categorical with any amount of levels.
+* We only get one response variable but can have as many predictor variables as we wish.
+
+We also still have to meet the regression assumptions:
+
+* The relationship between the predictor variable and the response variables should be linear
+* The errors of our predictions should be approximately normally distributed
+* Our predictor variables should not be correlated with each other
+* There should be a constant variability in our errors
+* Our errors should be independent (we will not focus on this here)
+
+## Selecting Variables
+
+The tricky part about working with MLR is that you want to find the right balance of variables. We *do* want to choose variables we think might have an effect on `rating` but we *don't* want to include any unnecessary variables or variables that don't provide much benefit to the model.
+
+As a result, MLR is an iterative process. I like to start out by creating a full model that has every single predictor variable that I think could be useful in predicting my response variable. I then use the output from the model to try and pull out the variables that are not pulling their weight.
+
+So let's start with that full model. These are the variables that I think might be useful (remember that in MLR we can use categorical variables):
+
+* Store
+* Customer Type
+* Gender
+* Total
+* Unit Price
+* Pay Method
+
+We will start by creating a model that includes all of these variables and go from there.
+
+## Building the Model
+
+Because we are still working in linear regression, we can use the same `lm_spec` engine from above to drive our model building. This time, we'll use a different formula to fit the model. Notice we are back on the training data because we are training a new model. We once again will take the log of `total`.
+
+```{r mlr-full-fit}
+mlr_mod_full <- lm_spec %>% 
+  fit(rating ~ store + customer_type + gender + log(total) + unit_price + pay_method, data = train)
+```
+
+Once we have done that, we can look at the output:
+
+```{r mlr-full-output}
+tidy(mlr_mod_full)
+```
+
+We see that R has created dummy variables for us for each of our categorical variables. We also see, once again, that the values in the `estimate` column are very small. It seems that each variable does not do a lot on it's own to predict `rating`. That being said, each individual variable is statistically significant indicating that each variable may provide some insight into predicting rating when used with the other variables.
+
+Let's see what the $R^2$ value is to see if we explained any more variance in `rating` than with SLR.
+
+```{r}
+glance(mlr_mod_full)
+```
+
+Looks like we explain 0.292% of the variance in rating! This is a small increase from before, even by including quite a few more variables. $R^2$ will always increase when including more variables and the fact that we still haven't explained even 1% of the variance in `rating` means that we still aren't doing a great job. 
+
+Even though this model isn't great, I do want to explore a different model by removing some of the variables to see if we can do equally as good with fewer variables. Why have extra variables in the model if we can do equally as good or slightly worse with a model that has less variables?
+
+Looking at the regression output, the log of `total` and `unit_price` seem to have the least effect in terms of their `estimate`. Let's remove them and see if anything changes.
+
+```{r mlr-reduced}
+mlr_mod_reduced <- lm_spec %>% 
+  fit(rating ~ store + customer_type + gender + pay_method, data = train)
+tidy(mlr_mod_reduced)
+glance(mlr_mod_reduced)
+```
+
+We see that we still explain 0.282% of the variation in `rating` even by removing two variables. I think it is justified to keep these two out of the (admittedly poor) model.
+
+## Assessing the Model
+
+Now let's assess the model and see if regression was a good choice. We already have seen indications that it is not but it's always good to check the assumptions.
+
+### Linearity
+
+First, can we assume linearity between the response and the predictor?
+
+As with SLR, we can use the errors for this. First, we need to calculate the errors for the training dataset (we previously found the errors for the testing dataset). Then we can plot the errors versus the predicted values.
+
+```{r}
+train_aug <- augment(mlr_mod_reduced, new_data = train)
+
+ggplot(data = train_aug, aes(x = .pred, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Errors vs. Predicted",
+       subtitle = "MLR Reduced Model") +
+  xlab("Fitted values") +
+  ylab("Errors")
+```
+
+We are looking for a random scatter of points (and not a pattern). We do see a random scatter here with no general pattern but I do see a column-like pattern. Also, the model does not predict ratings below 6.8 or higher than 7.3 which means we have some pretty high errors terms, seen with the points above 2 and below -2.
+
+### Constant Variability of Errors
+
+Using the above plot, do we see any curvature around the dashed line? Are the errors more spread out (vertically) at some points than others? As before, I do not see evidence to say that we have violated this assumption. At nearly every fitted value, the residuals span from about -2.5 to 2.5.
+
+### Normal Errors
+
+We can make a histogram of the errors to check for the normality assumption.
+
+```{r}
+ggplot(data = train_aug, aes(x = .resid)) +
+  geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
+  xlab("Residuals")
+```
+
+I would say we meet this assumption as well!
+
+### Colinearity Between Predictors
+
+We also should make sure that our predictor variables are not correlated with each other. If they are, we can consider create an interaction term (which would indicate that the two variables work together) or we should remove one of the correlated variables (under the theory that if they are both related and/or measuring the same thing, then only one is needed). We can look at all of this by creating a plot matrix.
+
+```{r corr-mtx}
+train_subset <- train %>% 
+  select(-c(id, product_class, qty, total, unit_price, date, time, subtotal))
+
+ggpairs(train_subset)
+```
+
+This is not intended to be a detailed look at all pairs of variables but can give us some insight into the distributions of each individual variable as well as what things look like across variables. I don't see any need for an interaction variable nor do I think that we have evidence for any correlation across predictors.
+
+Let's also take a quick peek at our testing data. How well does the model perform?
+
+```{r mlr-test}
+test_aug <- augment(mlr_mod_reduced, new_data = test)
+
+ggplot(data = test_aug, aes(x = .pred, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Errors vs. Predicted",
+       subtitle = "MLR Reduced Model Testing Dataset") +
+  xlab("Fitted values") +
+  ylab("Errors")
+```
+
+It looks like we still see a big range in our errors (between -3 and 3). This is a big range for errors. We also see again that the fitted values range from 6.8 to about 7.3 which doesn't not represent the `rating` variable accurately.
+
+## Wrap Up
+
+All in all, regression was not the best model to use to predict `rating`. The variables in the dataset simply do not hold enough information in order to make good predictions. We saw very low $R^2$ values, very small estimates for our linear model, and a high error rate. We also saw some slightly concerning error plots indicating that the regression assumptions may not be met which further questions the validity and accuracy of our results.
+
+
+
