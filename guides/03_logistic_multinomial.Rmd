@@ -1,7 +1,240 @@
 ---
-title: "Simple and Linear Regression"
+title: "Logistic and Multinomial Regression"
 author: "Ian Curtis"
 date: "2024-03-12"
 output: html_document
 ---
+
+# Welcome
+
+Hey there! This is the third guide in my Modeling Guide with R series. In the previous guide, we looked at simple and multiple linear regression. This page will focus on both logistic and multinomial regression. Although, I cannot cover all of the details and fine use cases of regression, we will explore some of the key ideas to focus on when creating and analyzing a regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. In both logistic and multinomial regression, we'll use train/test validation and we'll also look at a few candidate models.
+
+We will be using the same dataset for both the simple and multiple regression cases so let's get that set up first. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation.
+
+The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
+
+I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
+
+```{r load-items}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(gvsu215)
+library(car)
+
+retail <- read_csv(here::here("data/retail_clean.csv"))
+
+set.seed(52319)
+retail_split <- initial_split(retail, prop = .8, strata = store)
+
+train <- training(retail_split)
+test <- testing(retail_split)
+```
+
+Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
+
+# Logistic Regression
+
+Although most of the processes for logistic regression will be the same as or very similar to SLR and MLR, there are a few key differences. The key piece is what our response variable looks like. Remember, for SLR and MLR, our response variable had to be continuous. What if you want to predict a variable that isn't continuous? Well, logistic regression may come to the rescue.
+
+## Requirements
+
+In order to get valid results from logistic regression, we must meet certain assumptions.
+
+* The response variable must be categorical with two levels, no more, no less. We might also call this binary.
+* All of the observations should be independent
+* Our predictor variable(s) should not be correlated with each other
+* We must have a linear relationship between the *independent* variable and the *log odds*
+* All possible combinations of variables in the model must be represented
+
+Notice that we don't need to assume anything about our errors nor are we required to have a linear relationship between the predictors and the response variable. This is because logistic regression is not predicting the actual value for the response variable, it is predicting how likely it is to obtain a value for the response given the values of the predictors.
+
+## Selecting Variables
+
+First, let's decide what we want to predict. Again, we need a variable that has two levels. We have two options: `customer_type` and `gender`. I would like to focus on customer type and see if we can predict the probability that a certain customer is a member or not given information about their transaction. Do members shop differently than non members? I am inclined to say so. 
+
+We should also define our "base" level for customer type or which type we want to compare everything to. I am going to create a true binary variable for gender which takes on a value of 1 if a customer is a member and 0 if they are not. We also need to coerce this variable into a factor in order for the code later on to work.
+
+```{r}
+train <- train %>% 
+  mutate(member = as.factor(ifelse(customer_type == "Member", 1, 0)))
+```
+
+Technically, we can split up logistic regression into simple logistic regression (one predictor variable) and multiple logistic regression (more than one predictor variable). However, I am going to jump right into multiple logistic regression and dive into a model. As I did with MLR, I am going to start by choosing every variable that I think might play a role in predicting the gender of a customer and use the regression output to narrow things down.
+
+I would like to start with:
+
+* `store`
+* `gender`
+* `product_class`
+* `pay_method`
+* `rating`
+
+## Building the Model
+
+As mentioned above, the theory behind logistic regression is a little different from linear regression (SLR and MLR).
+
+We are measuring (predicting) the probability of being in a certain class, here whether a customer is a member or not. Since we choose to have "Member" be represented by a 1, we are essentially finding the odds of a certain customer being a member. We can define the odds of a "success" (a customer being member) as:
+
+$$
+\frac{Pr(Y_i = 1)}{Pr(Y_i = 0)} = \frac{p_i}{1-p_i}
+$$
+which is the probability of a given person being a member divided by one minues that same probability.
+
+The math behind predicting this can get pretty involved. However, I would like to show that if we take the log of the above odds, we get a formula like this (which is derived from the more complicated logistic equation): 
+
+$$
+\begin{equation*}
+\log\left(\frac{p_i}{1-p_i}\right) = \beta_0 + \beta_1 X_1 + ...
+\end{equation*}
+$$
+
+This should look slightly familiar to linear regression! We have a list of predictors and would would like to predict the parameters that allow us to use a function to predict how likely it is that a customer is a member.
+
+Now that we have an understanding of what the logistic model looks like, let's use R to build one!
+
+```{r}
+train_subset <- train %>% select(member, store, gender, product_class, pay_method, rating)
+
+log_spec <- logistic_reg() %>%
+  set_engine("glm")
+
+log_mod_full <- log_spec %>%
+  fit(member ~ store + gender + product_class + pay_method + rating, data = train_subset, family = "binomial")
+
+tidy(log_mod_full)
+```
+
+The tricky part about logistic regression is the interpretation. See, we are predicting the *log odds* of obtaining a customer that is a member. So, each value in the `estimate` column above can be interpreted as the change in the log odds of finding a member for a unit increase in the respective $X$ variable.
+
+So if a customer shops at Store C, their predicted log odds of being a member increases by 0.123 and therefore their predicted odds of being a member increases by $e^{0.123} = 1.13$.
+
+One thing to notice here is that none of the p-values for the estimates are statistically significant at the "typically" 0.05 level. It is important to note the difference between statistical significance and practical significance. It may be that we don't meet the 0.05 requirement, but sometimes, the p-value may be small enough to still mean something to us. At this moment, we are looking at the different variables that may help us predict if someone is a member or not. We don't necessarily need to have statistical significance as long as we are still getting good insight into our question.
+
+We can also explore our variables a little bit further. Using the following plot, we can look at the distribution of each of our variables separated by the member status of a customer.
+
+```{r}
+ggbivariate(train, outcome = "customer_type", explanatory = c("store", "gender", "product_class", "pay_method", "rating"))
+```
+
+My biggest takeaway here is that we have a pretty even split between members and non-members. In other words, both members and non-members engage in similar transactions. It may not be possible to accurately predict member status using the information provided in this dataset.
+
+With that being said, I would like to at least try a reduced model to see what the results are. I will use the p-values from above to guide my decision making and to create a reduced model. Some of these variables are not very useful at predicting member status so let's remove them from the model and try again. Let's use just payment method and product class.
+
+```{r}
+log_mod_reduced <- log_spec %>%
+  fit(member ~ product_class + pay_method, data = train_subset, family = "binomial")
+
+tidy(log_mod_reduced)
+```
+
+This model isn't much better but we do see some evidence that certain product classes and payment methods are more associated with a member than otherwise. For instance, if a customer purchases a food/beverage or a sports/travel item, their log odds of being a member increases by about 0.33. Perhaps members get a slight discount on items in these areas so they purchases more.
+
+We don't seem to do much better than the full model but there are some small improvements. Let's stick with this reduced model moving forward.
+
+## Assessing the Model
+
+I'm not a huge fan of this model for use in inference and predicting future values. We just don't have enough information about the customers and transactions in order to make a confident prediction. However, for educational purposes, I would like to see how well the model performs when making predictions. We also should check our assumptions.
+
+```{r log-mod-accuracy}
+log_aug <- augment(log_mod_reduced, type.predict = "response", 
+                      type.residuals = "deviance", new_data = train_subset) %>% 
+                      mutate(id = row_number())
+
+ggplot(data = log_aug, aes(x = .pred_class, y = member)) + 
+  geom_point() + 
+  geom_jitter() +
+  labs(x = "Predicted Member Status", 
+       y = "Actual Member Status", 
+       title = "Member Status: Predicted vs. Actual",
+       subtitle = "Training Data")
+    
+```
+
+This plot shows us how well the model did. It compares the actual member status with what the model would predict a customer to be. I did add a little bit of jitter to the plot so we could see each observation better (otherwise they all could lie on top of each other).
+
+The ideal situation is 100% prediction accuracy where all of the points lie at (0, 0) meaning we predicted a customer to not be a member and they actually weren't or at (1, 1) meaning we predicted a customer to be a member and they actually were. In the real world, we will have some error and will misclassify some observations which appear in (0, 1) and (1, 0). Looking at this plot, we see that we did in fact predict the member status correctly for many customers! However there are quite a few observations that we did not predict correctly.
+
+My main concern is that there is a roughly equal amount of observations in each quadrant. The model seems to not do much better than us just guessing the member status in which case we would expect to get about 50% accuracy. Let's see the actual numbers of our predictions.
+
+```{r log-mod-tbl}
+log_aug %>% 
+  rename("Predicted" = .pred_class,
+         "Actual" = member) %>% 
+  tbl_2var(Predicted~Actual,
+           caption = "Predicted Member Status vs. Actual Member Status")
+```
+
+We see that we got $181 + 257 = 438$ observations correctly predicted which means that we incorrectly predicted 361. We were $\frac{438}{799} * 100 = 54.82\%$ accurate. Not much better than just randomly guessing.
+
+I also want to check our prediction accuracy with the testing dataset.
+
+```{r log-test-accuracy}
+test <- test %>% 
+  mutate(member = ifelse(customer_type == "Member", 1, 0))
+
+log_aug_test <- augment(log_mod_reduced, type.predict = "response", 
+                      type.residuals = "deviance", new_data = test)
+
+ggplot(data = log_aug_test, aes(x = .pred_class, y = member)) + 
+  geom_point() + 
+  geom_jitter() +
+  labs(x = "Predicted Member Status", 
+       y = "Actual Member Status", 
+       title = "Member Status: Predicted vs. Actual",
+       subtitle = "Testing Data")
+
+log_aug_test %>% 
+  rename("Predicted" = .pred_class,
+         "Actual" = member) %>% 
+  tbl_2var(Predicted~Actual,
+           caption = "Predicted Member Status vs. Actual Member Status")
+```
+
+
+We see similar results from the training data. We did correctly predict some observations, but there are still quite a handful that we missed. To quantify it, we correctly predicted 103 out of 201 customer member statuses which gives an accuracy rate of 51.24%.
+
+Let's discuss our assumptions:
+
+* The response variable must be categorical with two levels, no more, no less. We might also call this binary.
+
+We met this when we chose variables earlier.
+
+* All of the observations should be independent
+
+We are assuming this to be true, trusting the person/service that collected this data. It is possible that one person is represented more than one or that one transaction influenced another, however.
+
+* Our predictor variable(s) should not be correlated with each other
+
+We used output from `ggbivariate` to explore this a bit above. I don't think we have evidence to say that the predictors are correlated with each other.
+
+However, we can use variance inflation factors (VIFs) to get a better idea of how correlated the predictor variables are. 
+
+```{r}
+log_mod_reduced %>% 
+  extract_fit_engine() %>% 
+  performance::multicollinearity()
+```
+
+The output states that we have low correlation between our predictors which is great! We can also verify this by looking at the `VIF` column. All values are much less than 10, the common cutoff for evidence of multicollinearity.
+
+* We must have a linear relationship between the and the *log odds* the predictor variables
+
+We can check this by plotting each variable against the log odds. I am going to skip this assumption since I am not confident with the model and since I will not be using the model for any inference.
+
+* All possible combinations of the variables in the model must be represented.
+
+This is met. We have actually already verified this by looking at tables and counts. There are no combinations of variables such that we have a zero count. For instance, the number of members who paid with a credit card is non-zero, as is the number of non-members who bought a food/beverage.
+
+# Wrap Up
+
+As we saw throughout this guide, using logistic regression to predict a customer's member status did not turn out as well as we thought. Our error rate was just about as good as guessing randomly (50/50 chance). That being said, I do think we gained some valuable insight into customer tendencies, even if we are not able to accurately predict member status. We were able to look at some of the product classes that members are more likely to purchase and found that members were more likely to make purchases using a credit card. It is also worth noting the the range of transaction rating is roughly the same regardless of whether someone is a member or not. This could be useful to the company as it allows them to focus on improving the quality of all transactions without the need to worry about if someone is a member or not. All in all, it is important to remember that logistic regression is best used when the response variable is binary (or has two levels) with predictor variables that can be either continous or categorical.
+
+
+
+https://sscc.wisc.edu/sscc/pubs/RegDiag-R/logistic-regression.html
+ISLR
+Bradford's activity
+https://stackoverflow.com/questions/69074437/verify-model-assumptions-with-tidymodels
+
 
