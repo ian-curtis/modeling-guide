@@ -1,5 +1,5 @@
 ---
-title: "Logistic and Multinomial Regression"
+title: "Logistic Regression"
 author: "Ian Curtis"
 date: "2024-03-12"
 output: html_document
@@ -7,11 +7,11 @@ output: html_document
 
 # Welcome
 
-Hey there! This is the third guide in my Modeling Guide with R series. In the previous guide, we looked at simple and multiple linear regression. This page will focus on both logistic and multinomial regression. Although, I cannot cover all of the details and fine use cases of regression, we will explore some of the key ideas to focus on when creating and analyzing a regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. In both logistic and multinomial regression, we'll use train/test validation and we'll also look at a few candidate models.
+Hey there! This is the third guide in my Modeling Guide with R series. In the previous guide, we looked at simple and multiple linear regression. This page will focus on logistic regression. Although, I cannot cover all of the details and fine use cases of regression, we will explore some of the key ideas to focus on when creating and analyzing a regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. As with SLR and MLR, we'll use train/test validation and we'll also look at a couple candidate models.
 
-We will be using the same dataset for both the simple and multiple regression cases so let's get that set up first. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation.
+We will be using the same dataset we have been using which covers transaction data. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation.
 
-The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
+The code below imports our packages and the data we cleaned in the first guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
 
 I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
 
@@ -46,8 +46,6 @@ In order to get valid results from logistic regression, we must meet certain ass
 * Our predictor variable(s) should not be correlated with each other
 * We must have a linear relationship between the *independent* variable and the *log odds*
 * All possible combinations of variables in the model must be represented
-
-Notice that we don't need to assume anything about our errors nor are we required to have a linear relationship between the predictors and the response variable. This is because logistic regression is not predicting the actual value for the response variable, it is predicting how likely it is to obtain a value for the response given the values of the predictors.
 
 ## Selecting Variables
 
