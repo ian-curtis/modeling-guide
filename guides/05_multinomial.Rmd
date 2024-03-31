@@ -1,0 +1,404 @@
+---
+title: "Logistic and Multinomial Regression"
+author: "Ian Curtis"
+date: "2024-03-12"
+output: html_document
+---
+
+# Welcome
+
+Hey there! This is the fifth guide in my Introduction to Modeling with R series. In the previous guide, we looked at logistic regression which involved a binary response variable. This page will focus on both multinomial regression, an extension of logistic regression. Although, I cannot cover all of the details and fine use cases of regression, we will explore some of the key ideas to focus on when creating and analyzing a regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. As before, we'll use train/test validation and we'll also look at a few candidate models.
+
+I again will start by importing our dataset as well as the packages we will be using. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation.
+
+The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
+
+I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
+
+```{r load-items}
+library(tidyverse)
+library(tidymodels)
+library(lubridate)
+library(GGally)
+library(gvsu215)
+library(car)
+
+retail <- read_csv(here::here("data/retail_clean.csv"))
+
+set.seed(52319)
+retail_split <- initial_split(retail, prop = .8, strata = store)
+
+train <- training(retail_split)
+test <- testing(retail_split)
+```
+
+Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
+
+# Multinomial Regression
+
+Although most of the processes for multinomial regression will be the same as or very similar to SLR, MLR, ad logistic regression, there are a few key differences. The key piece is what our response variable looks like. Remember, for SLR and MLR, our response variable had to be continuous. In logistic regression, the response variable had to be binary (or had to have two levels). What if the response variable has more than 2 levels?
+
+## Requirements
+
+In order to get valid results from multinomial regression, we must meet certain assumptions.
+
+* The response variable must be categorical with more than two levels. If we have exactly two, we'd be doing logistic regression and if we had one, we'd be doing linear regression.
+* Alternative categories/outcomes are independent
+* Our predictor variable(s) should not be correlated with each other
+* We must have a linear relationship between any continuous *independent* variables and the *log odds* of the response
+* The errors must be independent (no obvious clusters in the data)
+
+## Selecting Variables
+
+First, let's decide what we want to predict. Again, we need a variable that has more than two levels. We have a few choices: `store`, `product_class`, or `pay_method`. I am most interested in looking to see if we can predict which store a customer will shop at. This can be useful for a company to help in product ordering. If, for instance, we find that we can predict a customer's destination based on the product class, we could instruct stores to order more products of certain classes to avoid out of stocks.
+
+Technically, we can split up multinomial regression into simple multinomial regression (one predictor variable) and multiple multinomial regression (more than one predictor variable). However, I am going to jump right into multiple multinomial regression and dive into a model as predicting with one variable is not very exciting. As I did previously, I am going to start by choosing every variable that I think might play a role in predicting the gender of a customer and use the regression output to narrow things down.
+
+I would like to start with:
+
+* `customer_type`
+* `gender`
+* `product_class`
+* `qty`
+* `total`
+* `pay_method`
+* `rating`
+
+I also would like to create a new variable `hour` that describes the hour of the day a customer visited a store. The following code creates a subset of the data (and also codes our response variable as a factor).
+
+```{r}
+train_subset <- train %>% 
+  mutate(store = factor(store),
+         qty = factor(qty),
+         hour = factor(hour(time))) %>% 
+  select(store, customer_type, gender, product_class, qty, total, pay_method, rating, hour)
+
+test_subset <- test %>% 
+  mutate(store = factor(store),
+         qty = factor(qty),
+         hour = factor(hour(time))) %>% 
+  select(store, customer_type, gender, product_class, qty, total, pay_method, rating, hour)
+```
+
+## Exploring the Variables
+
+Now that we are predicting a response variable with multiple levels, we have to rethink our model equation. Essentially, we are trying to predict the likelihood of a certain store being shopped at given the values of our predictor variables.
+
+Multinomal regression also requires us to compare against a "base" level. Since our response variable has three levels, we are essentially creating two *logistic* regression equations which allow us to compare to the "base" level. Recall that we have three stores: A, B, and C. If we choose store A to be our comparison level, we are actually running logistic regression with the following odds ratio
+
+$$
+\frac{Pr(Y_i = \text{Store B})}{Pr(Y_i = \text{Store A})} = \frac{p_{\text{Store B}}}{p_{\text{Store A}}}
+$$
+and
+
+$$
+\frac{Pr(Y_i = \text{Store C})}{Pr(Y_i = \text{Store A})} = \frac{p_{\text{Store C}}}{p_{\text{Store A}}}
+$$
+This can make interpretation tricky as all of our calculations are being done *in comparison to Store A*.
+
+The math behind predicting this can get pretty involved. However, I would like to show that if we take the log of the above odds, we get a formula like this (which is derived from the more complicated logistic equation): 
+
+$$
+\begin{equation*}
+\log\left(\frac{Pr(Y_i = \text{Store B})}{Pr(Y_i = \text{Store A})}\right) = \beta_0 + \beta_1 X_1 + ...
+\end{equation*}
+$$
+where the predictions for the beta coefficients are derived from the data from Store B.
+
+This should look pretty familiar. We had a similar situation with logistic regression when we took the log of the odds. Here too we can take the log of the odds and get a linear relationship.
+
+Before officially building the model, let's make a few plots to visualize our variables.
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = store, fill = customer_type)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Visits to Stores by Member Status",
+       x = "Store",
+       y = "Count",
+       fill = "Member Status")
+```
+
+It looks like we have very similar results per store here. Store A seems to attract more non-members but this may be because it has more customers overall. We may not see an effect here later on in the model.
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = store, fill = gender)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Visits to Stores by Gender",
+       x = "Store",
+       y = "Count",
+       fill = "Gender")
+```
+
+Similar to the above plot, we see more males visiting store A but, again, this could be due to the fact that more customers visit store A (although not by much).
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = store, fill = product_class)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Store vs. Product Class",
+       x = "Store",
+       y = "Count",
+       fill = "Product Class")
+```
+
+We may end up seeing some sort of effect in the model with this variable. I'm just eyeballing the plot here but it looks like Store A sells more Home/Lifestyle and Electronic goods and less Fashion Accessories while Store B sells more Sports/Travel items and Store C sells more Food/Beverages.
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = store, fill = qty)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Store Location vs. Quantity Sold",
+       subtitle = "One Item, One Transaction",
+       x = "Store",
+       y = "Count",
+       fill = "Quantity")
+```
+
+It is hard to tell if there is a pattern here. I do see that Store A has more products sold in the middle areas (4, 5, 6, 7) while Store B is more even across the board and Store C has more on the higher end. However this is just a generality and I'm not sure if we will keep this variable.
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = total, fill = store)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Visits to Stores by Transaction Total",
+       x = "Total",
+       y = "Store",
+       fill = "Store") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+Totals seem to be very similar across stores and skewed right with the higher totals being less common than lower totals. Store C does seem to have higher purchase totals but this may be because of a few higher values rather than an general tendency.
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = store, fill = pay_method)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Store vs. Pay Method",
+       x = "Store",
+       y = "Count",
+       fill = "Pay Method")
+```
+
+Once again, results are similar across stores; however, I do see that Store A has more customers paying with Ewallet, Store B more with credit cards, and Store C more with cash. We will see if this difference is large enough to pop up in our model, but this may be useful information regardless. 
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = rating, fill = store)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Visits to Stores by Transaction Rating",
+       x = "Rating",
+       y = "Store",
+       fill = "Store") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+It looks like all stores have high and low ratings but, on average Store B is rated lower than the other two. It is unlikely that this will have a big effect in the model but I think this helps the company realize they should focus on increasing customer satisfaction at all stores, especially Store B.
+
+```{r}
+train_subset %>% 
+  ggplot(aes(x = store, fill = hour)) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Store vs. Hour Visited",
+       x = "Store",
+       y = "Count",
+       fill = "Hour")
+```
+
+It looks like all stores are open between the hours of 10am and 8pm. Store A attracts customers right at open and near the early afternoon but becomes less busy as the day goes on. Store B starts off pretty slow, gets a small rush early afternoon and finishes the day strong with the most customers arriving around 6 and 7 in the evening. Store C has roughly the same amount of traffic all day with small peaks at noon and 5pm. This information can be vital to the company to help them better prepare for rushes and make sure the shelves are stocked in preparation. 
+
+## Building the Model
+
+Now that we have an understanding of what the multinomal model looks like, let's use R to build one!
+
+```{r model-full}
+multi_spec <- multinom_reg() %>%
+  set_engine("nnet")
+
+multi_mod_full <- multi_spec %>%
+  fit(store ~ customer_type + gender + product_class + qty + total + pay_method + rating + hour, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necesary because we are not using corss-validation
+
+tidy(multi_mod_full) %>% 
+  print(n = Inf)
+```
+
+This gives us a huge output. Remember, we are technically running two regression functions at the same time, comparing Store B to Store A and Store C to Store A. So, for example, if you are not a member, we would predict your log odds of shopping at Store B to be 0.0636 less than Store A, holding all other variables constant.
+
+We will not be using this model as our final model. There are way to many variables and information to consider. Moreover, it doesn't look like all of these variables will have equal use in predicting the odds of shopping at a certain store. As with logistic regression, I will not be relying solely on p-values to determine which variables to keep. I am going to be looking at them to get an idea of how influential a variable might be, but I will also be thinking about which variables might have practical effect on the results.
+
+Looking through, I see the following:
+
+* Store B vs. Store A
+  * Gender could play a role here
+  * Some of the product classes have some influence but not all (this variable makes sense to include, however)
+  * Some of the quantity variables seem to have an effect but I'm not sure it's enough to merit keeping the variable
+  * I am on the fence about payment method. I really want it to be useful but I'm not too sure it is.
+  * For the most part, `hour` doesn't say much compared to Store A. However, we do have a highly significant p-value here which makes me think that `hour` plays some role.
+* Store C vs. Store A
+  * Gender plays a role here
+  * Same situation with product class. This variable makes logical sense to keep in the model but some of the categories just don't show a big difference compared to Store A
+  * For the most part, quantity plays little role in predicting the log odds of being in Store C vs. Store A. However, we do see that if you are buying 5 of an item, your predicted log odds decreases by 0.672.
+  * Same situation with payment method.
+  * Hour could say something, but not a lot here.
+  
+You may have noticed that a lot of our observations from looking at plots above have appeared in the results here. This is why we run regression. Sure, we can visualize trends but it's nice to have a statistical test to tell us how big of an effect the things we have observed are having on the outcome.
+
+I now want to build a reduced model by removing some of the variables. I think we can remove `customer_type` as there didn't seem to be much of a difference between stores. I also want to remove `qty`. After thinking about it, it probably doesn't make sense to predict which store someone will shop at based on a variable that is determined while they are shopping. (You could say the same for `product_class`; I say that it is more likely to choose a store based on the general category of item you are looking for than for how many of something you are looking for.) I also am taking out the rating and total variables. We saw earlier that ratings and totals were across the board for all stores and now we see that it makes a marginal difference in the log odds.
+
+```{r model-reduced}
+multi_mod_reduced <- multi_spec %>%
+  fit(store ~ gender + product_class + pay_method + hour, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necesary because we are not using cross-validation
+
+tidy(multi_mod_reduced) %>% 
+  print(n = Inf)
+```
+
+This still gives us a large model with many variables. Part of this is due to how many levels the `hour` variable contains. I do not want to remove `hour` since some of the hours seem to play a role in predicting the log odds of going to a certain store. As such, we should keep all the levels of `hour`.
+
+## Assessing the Model
+
+Let's see how we did!
+
+```{r}
+multi_aug <- augment(multi_mod_reduced, new_data = train_subset)
+
+head(multi_aug)
+
+ggplot(data = multi_aug, aes(x = .pred_class, y = store)) + 
+  geom_point() + 
+  geom_jitter() +
+  labs(x = "Predicted Store", 
+       y = "Actual Store ", 
+       title = "Store Visited: Predicted vs. Actual",
+       subtitle = "Training Data")
+```
+
+Well, we didn't do terribly but also not the best. We want to see the most dots as possible along the diagonal from the bottom left to the top right. This would mean we predicted a customer would go to a certain store and they actually did. We do see that we correctly predicted a nice handful of observations. That being said, there are quite a few that we did not predict correctly. We have about 30-40 observations in all possible combinations of stores meaning that we made some wrong predictions in every way possible.
+
+Let's see it in table form.
+
+```{r}
+multi_aug %>% 
+  rename("Predicted" = .pred_class,
+         "Actual" = store) %>% 
+  tbl_2var(Predicted~Actual,
+           caption = "Predicted Store Visited vs. Actual Store Visited")
+```
+
+Officially, we correctly predicted 330 out of the 799 observations for a score of 42.36%. Not great but better than 33% which is where I would expect to be if we were just guessing randomly! The next step here would be to run a hypothesis test to see if our score of 42.36% differs from 33% by a significant amount but that is beyond this guide.
+
+Before verifying our assumptions, we should check with the testing dataset.
+
+```{r multi-test-aug}
+multi_aug_test <- augment(multi_mod_reduced, new_data = test_subset)
+
+ggplot(data = multi_aug_test, aes(x = .pred_class, y = store)) + 
+  geom_point() + 
+  geom_jitter(width = 0.35, height = 0.35) +
+  labs(x = "Predicted Store", 
+       y = "Actual Store ", 
+       title = "Store Visited: Predicted vs. Actual",
+       subtitle = "Testing Data")
+
+multi_aug_test %>% 
+  rename("Predicted" = .pred_class,
+         "Actual" = store) %>% 
+  tbl_2var(Predicted~Actual,
+           caption = "Predicted Store Visited vs. Actual Store Visited (Testing)")
+```
+
+We see similar results. We have correctly predicted 73 out of the 201 observations for a score of 36.3%. This is worse than the training data (which was expected) but is also approaching the 33% realm which is what would expect to get if we just guessed randomly.
+
+### Checking Assumptions
+
+Even though our model is not performing great, it still is good to check our assumptions. It is possible that part of the reason why our model is not satisfactory is due to not meeting some assumptions.
+
+* The response variable must be categorical with more than two levels. If we have exactly two, we'd be doing logistic regression and if we had one, we'd be doing linear regression.
+
+We meet this since we chose a response variable (`store`) with more than three levels: A, B, and C.
+
+* Alternative categories/outcomes are independent
+
+Rose Werth has [a good explanation](https://bookdown.org/sarahwerth2024/CategoricalBook/multinomial-logit-regression-stata.html#independence-of-irrelevant-alternatives-iia) of what this assumption really means. Essentially "this assumption states that the relative likelihood of being in one category compared to the base category would not change if you added any other categories." We should be confident that there are no confounding variables out that that might change our outcome if they were considered.
+
+I honestly don't think we meet this assumption here. For instance, what if I told you the weather on a certain day or hour. Or what if I gave you traffic information about a certain day our hour. Would this influence your choice of store? Maybe, maybe not. But it is possible that knowing this information might change the outcome. For example, what if you were planning on going to Store B but I told you there was a car accident on the way there and you decided to go to Store C instead to avoid the traffic. That's a change in the outcome.
+
+I think this violation plays a role in our models lack of major success. Because there are so many other variables out there that we could collect and consider, we aren't able to make an accurate prediction.
+
+* Our predictor variable(s) should not be correlated with each other
+
+As before, let's look at variance inflation factors to look at multicollinearity.
+
+```{r}
+multi_mod_reduced %>% 
+  extract_fit_engine() %>% 
+  performance::multicollinearity()
+```
+
+We have evidence for low correlation between predictors. `gender`, `product_class`, and `pay_method` all have VIF values of less than 5. `product_class` is getting close to showing evidence of correlation with the other predictors but not terribly concerning.
+
+What strikes me more is the massive VIF for `hour`. At 18.33, it is clearly correlated with other predictors. At this point, it should be dropped or combined into another variable. I'm not sure we could get a better model with the data we have, but curiosity strikes me to test something. I am going to create a new variable that merges some of the `hour`s together and then run a new model on that.
+
+```{r}
+train_subset <- train_subset %>% 
+  mutate(time_of_day = case_when(hour %in% c(10, 11, 12, 13, 14) ~ "Midday",
+                                 hour %in% c(15, 16, 17, 18) ~ "Afternoon",
+                                 TRUE ~ "Evening"))
+
+multi_mod_reduced2 <- multi_spec %>%
+  fit(store ~  gender + product_class + pay_method + time_of_day, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necesary because we are not using corss-validation
+
+tidy(multi_mod_reduced2) %>% 
+  print(n = Inf)
+
+multi_aug2 <- augment(multi_mod_reduced2, new_data = train_subset)
+
+ggplot(data = multi_aug2, aes(x = .pred_class, y = store)) + 
+  geom_point() + 
+  geom_jitter() +
+  labs(x = "Predicted Store", 
+       y = "Actual Store ", 
+       title = "Store Visited: Predicted vs. Actual",
+       subtitle = "Training Data: Reduced Model 2")
+
+multi_mod_reduced2 %>% 
+  extract_fit_engine() %>% 
+  performance::multicollinearity()
+```
+
+As expected, the results don't look much better. However, we have corrected the massively large VIF value! I would trust this second reduced model more than the original reduced model.
+
+* We must have a linear relationship between any continuous *independent* variables and the *log odds* of the response
+
+We can check this by plotting each predictor against the log odds. I am going to skip this assumption since I am not confident with the model and since I will not be using the model for any inference.
+
+* The errors must be independent (no obvious clusters in the data)
+
+We may have clusters in the data depending on how the data was collected and on whom it was collected. It is very possible that we have multiple individuals represented here in this dataset. We may also have clusters of different ethnicities or other variables. I am not confident we meet this assumption either due to the variables we have versus those we do not have.
+
+# Wrap Up
+
+I think we are seeing a pattern over these guides of not quite being able to predict our outcomes as well as we'd like. Here, we had a few points of interest but it wasn't enough to give us great prediction accurayc. Even though our models are "successful" per se, I would claim that we still are extracting valuable information about our data. Just knowing that this collection of variables does not provide enough information to accurately predict the store a customer visits is useful. We now know that we should 1) try a different outcome variable, 2) use different predictors, and/or 3) collect new data to help supplment what we have here. We also found some interesting patterns when looking at visualizations and the regression output.
+
+The moral of the story is don't fear when your results aren't significant or aren't what you'd hoped. Think about what you were able to gain from the process. A model that doesn't work well is still progress and can tell you a lot about your data. Why didn't the model work? What could you do to change the model or update the data? Every pattern, trend, failure, and success allows us to learn something and make changes and suggestions for the future.
+
+
+https://bookdown.org/sarahwerth2024/CategoricalBook/multinomial-logit-regression-r.html
+ISLR
+https://easystats.github.io/performance/reference/check_collinearity.html
+
+
