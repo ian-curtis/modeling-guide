@@ -1,5 +1,5 @@
 ---
-title: "01: Exploratory Data Analysis and Cleaning"
+title: "Exploratory Data Analysis and Cleaning"
 author: "Ian Curtis"
 date: "2024-03-12"
 output: html_document
@@ -30,23 +30,22 @@ head(retail)
 
 It looks like we have a dataset that has 1000 observations with 17 variables. This is not a ton of observations but is enough to present the modeling concepts. 
 
-Now that this is done, I took a look at the variable names and the kinds of variables we have in this dataset. For this, we can use the `summary()` function which will give us a brief understanding of the variables.
+Now that this is done, let's look at the variable names and the kinds of variables we have in this dataset. For this, we can use the `summary()` function which will give us a brief understanding of the variables.
 
 ```{r summary}
 summary(retail)
 ```
 
-At this point, I'm just looking at general features. I'm making sure that each of the character variables have length 1000 (which is how many rows we have) and that the numerical summaries have values that make sense (for example the `Rating` variable has a max of 10 which is logical). I'm also looking at any adjustments that I need to make to the data to make it easier to work with. Of course, to remain ethical analysts, we should never "edit" the data. Here, I'm talking about editing variable names, ensuring that each variable has the correct type (e.g., the `Date` variable should be encoded as a date), and checking for input errors.
+Here, I'm just looking at general features. I'm making sure that each of the character variables have length 1000 (which is how many rows we have) and that the numerical summaries have values that make sense (for example the `Rating` variable has a max of 10 which is logical). I'm also looking at any adjustments that I need to make to the data to make it easier to work with. Of course, to remain ethical analysts, we should never "edit" the data. Here, I'm talking about editing variable names, ensuring that each variable has the correct type (e.g., the `Date` variable should be encoded as a date), and checking for input errors.
 
-After looking at the summary, I think I want to take the time to rename the variables. This isn't always a necessary step, but since I will be using this data over the course of multiple guides so I want to make sure I am comfortable with it. The code below:
+After looking at the summary, I think I want to take the time to rename the variables. This isn't always a necessary step, but since I will be using this data over the course of multiple guides I want to make sure I am comfortable with it. The code below:
 
 1. Renames a handful of the variables using my preferred style: snake_case
 2. Removes several variables that [were miscalculated](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/discussion/359987). The `City` variable is also removed as the same information can be conveyed with the Store ID and helps promote anonymity.
 3. Edits several variables.
   a. Coerces the `date` variable into a date object
-  b. Turns the `store` and `qty` variables into a factor (for proper grouping later on)
-  c. Calculates the subtotal of a purchase before tax by dividing the total of the purchase by 1.05 (5% tax)
-  d. Calculates the unit price of an item by dividing the subtotal by the quantity.
+  b. Calculates the subtotal of a purchase before tax by dividing the total of the purchase by 1.05 (5% tax)
+  c. Calculates the unit price of an item by dividing the subtotal by the quantity.
 
 ```{r prep-data}
 retail <- retail %>% 
@@ -63,17 +62,15 @@ retail <- retail %>%
          total = Total) %>% 
   select(-c(`Tax 5%`, cogs, `gross margin percentage`, `gross income`, `Unit price`, City)) %>% 
   mutate(date = mdy(date),
-         store = factor(store),
          subtotal = total / 1.05,
-         unit_price = subtotal / qty,
-         qty = factor(qty)
+         unit_price = subtotal / qty
          )
 head(retail)
 ```
 
 # Basic Exploratory Data Analysis
 
-Specific data explorations will occur within each respective guide. However, I do think it is important to look at some of the variables to anticipate any potential problems we might have. It also helps to get a general *visual* understanding of what we are working with here.
+Specific data explorations will occur within the respective guides. However, I do think it is important to look at some of the variables to anticipate any potential problems we might have. It also helps to get a general *visual* understanding of what we are working with here.
 
 Let's start by creating some basic one-variable plots! I'll follow each plot with a few things that I notice and that I may want to pay attention to later.
 
@@ -83,7 +80,7 @@ retail %>% ggplot(aes(store, label = store)) +
   geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
   labs(x = "Store ID",
        y = "Count",
-       title = "Counts of Each Store Name")
+       title = "Counts of Transactions by Store")
 ```
 
 * There are three stores and no missing values
@@ -114,7 +111,8 @@ retail %>% ggplot(aes(gender, label = gender)) +
        subtitle = "Represented by This Dataset")
 ```
 
-* There are two genders here and no missing values
+* No information on how this variable was calculated. It is possible that it was self-reported but could have been derived programmatically Again, I'll note that it is not clear whether this dataset was randomly generated or is from the real world. There are also two genders represented here although more could be possible.
+* There are no missing values
 * There is not an equal number of customers in each gender represented (501 vs. 499)
 
 ```{r eda-class}
@@ -130,7 +128,7 @@ retail %>% ggplot(aes(product_class, label = product_class)) +
 * There are six different product classes and no missing values
 * There are not an equal number of items across the classes
 * Each class has at least 150 items
-* The plot may contain items that have been counted twice (e.g., if two customers purchased the same item in separate transactions)
+* The plot could contain items that have been counted twice (e.g., if two customers purchased the same item in separate transactions)
 
 ```{r eda-qty}
 retail %>% ggplot(aes(qty)) +
@@ -171,7 +169,6 @@ retail %>% ggplot(aes(pay_method, label = pay_method)) +
        title = "Counts of Each Payment Method")
 ```
 
-
 * There are three different payment methods and no missing values
 * There is not an equal number of payment methods
 
@@ -186,7 +183,7 @@ retail %>% ggplot(aes(rating)) +
 
 
 * The distribution is roughly uniform with lower counts on the tails (ratings of 4 and 10) and has no missing values
-* No rating exceeds 10 or falls below 4
+* No rating exceeds 10 or falls below 4 (which is suspect)
 
 ```{r eda-unit-price}
 retail %>% ggplot(aes(unit_price)) +

@@ -7,9 +7,9 @@ output: html_document
 
 # Welcome
 
-Hey there! This is the fifth guide in my Introduction to Modeling with R series. In the previous guide, we looked at logistic regression which involved a binary response variable. This page will focus on both multinomial regression, an extension of logistic regression. Although, I cannot cover all of the details and fine use cases of regression, we will explore some of the key ideas to focus on when creating and analyzing a regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. As before, we'll use train/test validation and we'll also look at a few candidate models.
+Hey there! This is the fifth guide in my Introduction to Modeling with R series. In the previous guide, we looked at logistic regression which involved a binary response variable. This page will focus on multinomial regression, an extension of logistic regression. Although, I cannot cover all of the details and fine use cases of regression, we will explore some of the key ideas to focus on when creating and analyzing a regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. As before, we'll use train/test validation and we'll also look at a few candidate models.
 
-I again will start by importing our dataset as well as the packages we will be using. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation.
+I again will start by importing our dataset as well as the packages we will be using. As mentioned in the previous guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation.
 
 The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
 
@@ -19,6 +19,7 @@ I will be setting the seed for the random generator so we can get the same resul
 library(tidyverse)
 library(tidymodels)
 library(lubridate)
+library(performance)
 library(GGally)
 library(gvsu215)
 library(car)
@@ -32,7 +33,7 @@ train <- training(retail_split)
 test <- testing(retail_split)
 ```
 
-Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
+Alright! Now that we have that all set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
 
 # Multinomial Regression
 
@@ -42,7 +43,7 @@ Although most of the processes for multinomial regression will be the same as or
 
 In order to get valid results from multinomial regression, we must meet certain assumptions.
 
-* The response variable must be categorical with more than two levels. If we have exactly two, we'd be doing logistic regression and if we had one, we'd be doing linear regression.
+* The response variable must be categorical with more than two levels. If we have exactly two, we'd be doing logistic regression and if we had one, we'd have 100% accuracy.
 * Alternative categories/outcomes are independent
 * Our predictor variable(s) should not be correlated with each other
 * We must have a linear relationship between any continuous *independent* variables and the *log odds* of the response
@@ -64,7 +65,7 @@ I would like to start with:
 * `pay_method`
 * `rating`
 
-I also would like to create a new variable `hour` that describes the hour of the day a customer visited a store. The following code creates a subset of the data (and also codes our response variable as a factor).
+This time, I also want to create a new variable `hour` that describes the hour of the day a customer visited a store. The following code creates a subset of the data (and also codes our response variable as a factor).
 
 ```{r}
 train_subset <- train %>% 
@@ -84,7 +85,7 @@ test_subset <- test %>%
 
 Now that we are predicting a response variable with multiple levels, we have to rethink our model equation. Essentially, we are trying to predict the likelihood of a certain store being shopped at given the values of our predictor variables.
 
-Multinomal regression also requires us to compare against a "base" level. Since our response variable has three levels, we are essentially creating two *logistic* regression equations which allow us to compare to the "base" level. Recall that we have three stores: A, B, and C. If we choose store A to be our comparison level, we are actually running logistic regression with the following odds ratio
+Like binomial regression, multinomial regression also requires us to compare against a "base" level. Since our response variable has three levels, we are essentially creating two *logistic* regression equations which allow us to compare to the "base" level. Recall that we have three stores: A, B, and C. If we choose store A to be our comparison level, we are actually running logistic regression with the following odds ratio
 
 $$
 \frac{Pr(Y_i = \text{Store B})}{Pr(Y_i = \text{Store A})} = \frac{p_{\text{Store B}}}{p_{\text{Store A}}}
@@ -105,7 +106,7 @@ $$
 $$
 where the predictions for the beta coefficients are derived from the data from Store B.
 
-This should look pretty familiar. We had a similar situation with logistic regression when we took the log of the odds. Here too we can take the log of the odds and get a linear relationship.
+This should look pretty familiar. We had a similar situation with logistic regression when we took the log of the odds. Here too we can take the log of the odds and we have a linear relationship between the predictors and the log odds, or logit.
 
 Before officially building the model, let's make a few plots to visualize our variables.
 
@@ -218,25 +219,40 @@ train_subset %>%
 
 It looks like all stores are open between the hours of 10am and 8pm. Store A attracts customers right at open and near the early afternoon but becomes less busy as the day goes on. Store B starts off pretty slow, gets a small rush early afternoon and finishes the day strong with the most customers arriving around 6 and 7 in the evening. Store C has roughly the same amount of traffic all day with small peaks at noon and 5pm. This information can be vital to the company to help them better prepare for rushes and make sure the shelves are stocked in preparation. 
 
+To wrap up, it's a good idea to look at all of the variables together (as we have done before) to look for any potential interaction terms or transformations (e.g., square root, log, square, cube, etc.).
+
+```{r}
+ggpairs(train_subset)
+```
+
+We are using the `total` variable in this model so we will want to apply a transformation to it here, such as the square root. I'd also like to explore a potential interaction between product class and payment method.
+
 ## Building the Model
 
-Now that we have an understanding of what the multinomal model looks like, let's use R to build one!
+Now that we have an understanding of what the multinomial model looks like, let's use R to build one!
 
 ```{r model-full}
+train_subset <- train_subset %>% 
+  mutate(sqrt_total = sqrt(total))
+test_subset <- test_subset %>% 
+  mutate(sqrt_total = sqrt(total))
+
 multi_spec <- multinom_reg() %>%
   set_engine("nnet")
 
 multi_mod_full <- multi_spec %>%
-  fit(store ~ customer_type + gender + product_class + qty + total + pay_method + rating + hour, data = train_subset) %>% 
-  repair_call(data = train_subset) # this is necesary because we are not using corss-validation
+  fit(store ~ customer_type + gender + product_class + qty + sqrt_total + pay_method + rating + hour + product_class*pay_method, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_full) %>% 
   print(n = Inf)
+
+model_performance(multi_mod_full)
 ```
 
-This gives us a huge output. Remember, we are technically running two regression functions at the same time, comparing Store B to Store A and Store C to Store A. So, for example, if you are not a member, we would predict your log odds of shopping at Store B to be 0.0636 less than Store A, holding all other variables constant.
+This gives us a huge output. Remember, we are really running two regression models at the same time, comparing Store B to Store A and Store C to Store A. So, for example, if you purchase a home/lifestyle good, we would predict your log odds of shopping at Store B to be 1.00 compared to Store A, holding all other variables constant.
 
-We will not be using this model as our final model. There are way to many variables and information to consider. Moreover, it doesn't look like all of these variables will have equal use in predicting the odds of shopping at a certain store. As with logistic regression, I will not be relying solely on p-values to determine which variables to keep. I am going to be looking at them to get an idea of how influential a variable might be, but I will also be thinking about which variables might have practical effect on the results.
+We will certainly not be using this model as our final model. There are way too many variables and too information to consider. Moreover, it doesn't look like all of these variables will have equal use in predicting the odds of shopping at a certain store. As with logistic regression, I will not be relying solely on p-values to determine which variables to keep. I am going to be looking at them to get an idea of how influential a variable might be, but I will also be thinking about which variables might have practical effect on the results.
 
 Looking through, I see the following:
 
@@ -246,36 +262,56 @@ Looking through, I see the following:
   * Some of the quantity variables seem to have an effect but I'm not sure it's enough to merit keeping the variable
   * I am on the fence about payment method. I really want it to be useful but I'm not too sure it is.
   * For the most part, `hour` doesn't say much compared to Store A. However, we do have a highly significant p-value here which makes me think that `hour` plays some role.
+  * It looks like we may actually have an interaction between product class and payment method. A lot of these variables have small p-values and larger estimates.
 * Store C vs. Store A
   * Gender plays a role here
   * Same situation with product class. This variable makes logical sense to keep in the model but some of the categories just don't show a big difference compared to Store A
   * For the most part, quantity plays little role in predicting the log odds of being in Store C vs. Store A. However, we do see that if you are buying 5 of an item, your predicted log odds decreases by 0.672.
   * Same situation with payment method.
   * Hour could say something, but not a lot here.
+  * Similar situation with the interaction variable.
   
 You may have noticed that a lot of our observations from looking at plots above have appeared in the results here. This is why we run regression. Sure, we can visualize trends but it's nice to have a statistical test to tell us how big of an effect the things we have observed are having on the outcome.
 
-I now want to build a reduced model by removing some of the variables. I think we can remove `customer_type` as there didn't seem to be much of a difference between stores. I also want to remove `qty`. After thinking about it, it probably doesn't make sense to predict which store someone will shop at based on a variable that is determined while they are shopping. (You could say the same for `product_class`; I say that it is more likely to choose a store based on the general category of item you are looking for than for how many of something you are looking for.) I also am taking out the rating and total variables. We saw earlier that ratings and totals were across the board for all stores and now we see that it makes a marginal difference in the log odds.
+I now want to build a reduced model by removing some of the variables. I think we can remove `customer_type` as there didn't seem to be much of a difference between stores. I also want to remove `qty`. After thinking about it, it probably doesn't make sense to predict which store someone will shop at based on a variable that is determined while they are shopping. I also am taking out the rating and `log_total` variables. We saw earlier that ratings and totals were across the board for all stores and now we see that it makes a marginal difference in the log odds. I will be keeping the interaction in the model and therefore should also keep the two variables that make up that interaction: product class and pay method.
+
 
 ```{r model-reduced}
 multi_mod_reduced <- multi_spec %>%
-  fit(store ~ gender + product_class + pay_method + hour, data = train_subset) %>% 
-  repair_call(data = train_subset) # this is necesary because we are not using cross-validation
+  fit(store ~ gender + product_class + pay_method + hour + product_class*pay_method, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_reduced) %>% 
   print(n = Inf)
+
+model_performance(multi_mod_reduced)
 ```
 
-This still gives us a large model with many variables. Part of this is due to how many levels the `hour` variable contains. I do not want to remove `hour` since some of the hours seem to play a role in predicting the log odds of going to a certain store. As such, we should keep all the levels of `hour`.
+This still gives us a large model with many variables. Part of this is due to how many levels the `hour` variable and the interaction variable contains. I hesitate to remove `hour` since some of the hours seem to play a role in predicting the log odds of going to a certain store. Before moving forward with this model (which does seem to be a slight improvement from the full model as we have lowered the AIC and BIC), I would like to fit one more model without `hour` to see what happens.
+
+```{r model-no-hour}
+multi_mod_nohour <- multi_spec %>%
+  fit(store ~ gender + product_class + pay_method + product_class*pay_method, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necessary because we are not using cross-validation
+
+tidy(multi_mod_nohour) %>% 
+  print(n = Inf)
+
+model_performance(multi_mod_nohour)
+```
+
+Well...I'm not upset about this one! We've lowered the AIC and BIC once again although our RMSE has increased only slightly. The $R^2$ has gone down but it wasn't very large at all to begin with. At this point, I'm not really sure which model is "better". It is very nice to remove `hour` and lose a large number of levels seen in the model. But there were a few levels of `hour` that seemed to play a role in the model and I hesitate just dropping it.
+
+After thinking about it, I am going to move forward with both of the models. I will look at our model accuracy on both of the models first and then pick the model with the highest prediction accuracy.
 
 ## Assessing the Model
 
 Let's see how we did!
 
+### Reduced Model
+
 ```{r}
 multi_aug <- augment(multi_mod_reduced, new_data = train_subset)
-
-head(multi_aug)
 
 ggplot(data = multi_aug, aes(x = .pred_class, y = store)) + 
   geom_point() + 
@@ -283,10 +319,10 @@ ggplot(data = multi_aug, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "Training Data")
+       subtitle = "Reduced Model | Training Data")
 ```
 
-Well, we didn't do terribly but also not the best. We want to see the most dots as possible along the diagonal from the bottom left to the top right. This would mean we predicted a customer would go to a certain store and they actually did. We do see that we correctly predicted a nice handful of observations. That being said, there are quite a few that we did not predict correctly. We have about 30-40 observations in all possible combinations of stores meaning that we made some wrong predictions in every way possible.
+Well, the reduced model didn't do terribly but also not the best. We want to see the most dots as possible along the diagonal from the bottom left to the top right. This would mean we predicted a customer would go to a certain store and they actually did. We do see that we correctly predicted a nice handful of observations. That being said, there are quite a few that we did not predict correctly. We have about 30-40 observations in all possible combinations of stores meaning that we made some wrong predictions in every way possible.
 
 Let's see it in table form.
 
@@ -295,12 +331,12 @@ multi_aug %>%
   rename("Predicted" = .pred_class,
          "Actual" = store) %>% 
   tbl_2var(Predicted~Actual,
-           caption = "Predicted Store Visited vs. Actual Store Visited")
+           caption = "Predicted Store Visited vs. Actual Store Visited \n Reduced Model")
 ```
 
-Officially, we correctly predicted 330 out of the 799 observations for a score of 42.36%. Not great but better than 33% which is where I would expect to be if we were just guessing randomly! The next step here would be to run a hypothesis test to see if our score of 42.36% differs from 33% by a significant amount but that is beyond this guide.
+Officially, we correctly predicted 351 out of the 799 observations for a score of 43.93%. Not great but better than 33% which is where I would expect to be if we were just guessing randomly!
 
-Before verifying our assumptions, we should check with the testing dataset.
+We should also check with the testing dataset.
 
 ```{r multi-test-aug}
 multi_aug_test <- augment(multi_mod_reduced, new_data = test_subset)
@@ -311,26 +347,77 @@ ggplot(data = multi_aug_test, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "Testing Data")
+       subtitle = "No Hour Model | Testing Data")
 
 multi_aug_test %>% 
   rename("Predicted" = .pred_class,
          "Actual" = store) %>% 
   tbl_2var(Predicted~Actual,
-           caption = "Predicted Store Visited vs. Actual Store Visited (Testing)")
+           caption = "Predicted Store Visited vs. Actual Store Visited (Testing) \n No Hour Model")
 ```
 
-We see similar results. We have correctly predicted 73 out of the 201 observations for a score of 36.3%. This is worse than the training data (which was expected) but is also approaching the 33% realm which is what would expect to get if we just guessed randomly.
+We see similar results. We have correctly predicted 79 out of the 201 observations for a score of 39.3%. This is worse than the training data (which is expected) but is also approaching the 33% realm which is what would expect to get if we just guessed randomly.
 
-### Checking Assumptions
+### The "No Hour" Model
 
-Even though our model is not performing great, it still is good to check our assumptions. It is possible that part of the reason why our model is not satisfactory is due to not meeting some assumptions.
+```{r}
+multi_aug_nohour <- augment(multi_mod_nohour, new_data = train_subset)
 
-* The response variable must be categorical with more than two levels. If we have exactly two, we'd be doing logistic regression and if we had one, we'd be doing linear regression.
+ggplot(data = multi_aug_nohour, aes(x = .pred_class, y = store)) + 
+  geom_point() + 
+  geom_jitter() +
+  labs(x = "Predicted Store", 
+       y = "Actual Store ", 
+       title = "Store Visited: Predicted vs. Actual",
+       subtitle = "No Hour Model | Training Data")
+```
 
-We meet this since we chose a response variable (`store`) with more than three levels: A, B, and C.
+Just looking at this plot, I don't see any striking evidence that we did any better or worse by taking `hour` out of the model. We still have plenty of observations where we incorrectly predict their `store` value.
 
-* Alternative categories/outcomes are independent
+```{r}
+multi_aug_nohour %>% 
+  rename("Predicted" = .pred_class,
+         "Actual" = store) %>% 
+  tbl_2var(Predicted~Actual,
+           caption = "Predicted Store Visited vs. Actual Store Visited \n No Hour Model")
+```
+
+We have less correct predictions here with a score of 327 out of 799 which gives a 40.93% accuracy. 
+
+```{r}
+multi_aug_test_nohour <- augment(multi_mod_nohour, new_data = test_subset)
+
+ggplot(data = multi_aug_test_nohour, aes(x = .pred_class, y = store)) + 
+  geom_point() + 
+  geom_jitter(width = 0.35, height = 0.35) +
+  labs(x = "Predicted Store", 
+       y = "Actual Store ", 
+       title = "Store Visited: Predicted vs. Actual",
+       subtitle = "No Hour Model | Testing Data")
+
+multi_aug_test_nohour %>% 
+  rename("Predicted" = .pred_class,
+         "Actual" = store) %>% 
+  tbl_2var(Predicted~Actual,
+           caption = "Predicted Store Visited vs. Actual Store Visited (Testing) \n No Hour Model")
+```
+
+With the testing data, we predict 74/201 correct for a score of 36.82%. Based on these results, I think I am willing to sacrifice the extra variables and keep the model that includes `hour`. We will continue to move on and check model assumptions with this model.
+
+
+## Checking Assumptions
+
+Even though our model is not performing as well as I'd hoped, it still is good to check our assumptions. It is possible that part of the reason why our model is not satisfactory is due to not meeting some assumptions.
+
+```{r}
+diagnostics <- plot(check_model(multi_mod_reduced, panel = FALSE, residual_type = "normal"))
+```
+
+### Variable Types
+
+We meet this since we chose a response variable (`store`) with more than two levels: A, B, and C.
+
+### Alternative Categories / Outcomes are Independent
 
 Rose Werth has [a good explanation](https://bookdown.org/sarahwerth2024/CategoricalBook/multinomial-logit-regression-stata.html#independence-of-irrelevant-alternatives-iia) of what this assumption really means. Essentially "this assumption states that the relative likelihood of being in one category compared to the base category would not change if you added any other categories." We should be confident that there are no confounding variables out that that might change our outcome if they were considered.
 
@@ -338,19 +425,29 @@ I honestly don't think we meet this assumption here. For instance, what if I tol
 
 I think this violation plays a role in our models lack of major success. Because there are so many other variables out there that we could collect and consider, we aren't able to make an accurate prediction.
 
-* Our predictor variable(s) should not be correlated with each other
+### No Correlation Between Predictors
 
 As before, let's look at variance inflation factors to look at multicollinearity.
 
 ```{r}
 multi_mod_reduced %>% 
   extract_fit_engine() %>% 
-  performance::multicollinearity()
+  check_collinearity()
 ```
 
-We have evidence for low correlation between predictors. `gender`, `product_class`, and `pay_method` all have VIF values of less than 5. `product_class` is getting close to showing evidence of correlation with the other predictors but not terribly concerning.
+This is not good at all, but remember that we have an interaction term in our model so we do expect some correlation there. We should check VIFs without any interactions.
 
-What strikes me more is the massive VIF for `hour`. At 18.33, it is clearly correlated with other predictors. At this point, it should be dropped or combined into another variable. I'm not sure we could get a better model with the data we have, but curiosity strikes me to test something. I am going to create a new variable that merges some of the `hour`s together and then run a new model on that.
+```{r}
+multi_spec %>%
+  fit(store ~ gender + product_class + pay_method + hour, data = train_subset) %>% 
+  repair_call(data = train_subset) %>% 
+  extract_fit_engine() %>% 
+  check_collinearity()
+```
+
+We have evidence for low correlation between predictors. `gender`, `product_class`, and `pay_method` all have VIF values of less than 5. `product_class` is getting close to showing evidence of correlation with the other predictors but not bad.
+
+What strikes me more is the massive VIF for `hour`. At 18.33, it is clearly correlated with other predictors. At this point, it should be dropped or combined into another variable. I'm not sure we could get a better model with the data we have, but curiosity strikes me to test something. I am going to create a new variable that merges some of the `hour`s together and then I'll run a new model on that. I won't include the interaction for demonstration purposes.
 
 ```{r}
 train_subset <- train_subset %>% 
@@ -360,7 +457,7 @@ train_subset <- train_subset %>%
 
 multi_mod_reduced2 <- multi_spec %>%
   fit(store ~  gender + product_class + pay_method + time_of_day, data = train_subset) %>% 
-  repair_call(data = train_subset) # this is necesary because we are not using corss-validation
+  repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_reduced2) %>% 
   print(n = Inf)
@@ -377,22 +474,30 @@ ggplot(data = multi_aug2, aes(x = .pred_class, y = store)) +
 
 multi_mod_reduced2 %>% 
   extract_fit_engine() %>% 
-  performance::multicollinearity()
+  check_collinearity()
 ```
 
-As expected, the results don't look much better. However, we have corrected the massively large VIF value! I would trust this second reduced model more than the original reduced model.
+The results don't look much better. However, we have corrected the massively large VIF value! I would trust this second reduced model more than the original reduced model.
 
-* We must have a linear relationship between any continuous *independent* variables and the *log odds* of the response
+### Linearity Between Log Odds and Predictors
 
 We can check this by plotting each predictor against the log odds. I am going to skip this assumption since I am not confident with the model and since I will not be using the model for any inference.
 
-* The errors must be independent (no obvious clusters in the data)
+### Independent Errors
 
 We may have clusters in the data depending on how the data was collected and on whom it was collected. It is very possible that we have multiple individuals represented here in this dataset. We may also have clusters of different ethnicities or other variables. I am not confident we meet this assumption either due to the variables we have versus those we do not have.
 
+### Normal Errors
+
+```{r}
+diagnostics[[3]]
+```
+
+Ideally, we'd like to see our errors normally distributed as well. According to this Q-Q Plot, we do not meet this assumption which questions our model results further.
+
 # Wrap Up
 
-I think we are seeing a pattern over these guides of not quite being able to predict our outcomes as well as we'd like. Here, we had a few points of interest but it wasn't enough to give us great prediction accurayc. Even though our models are "successful" per se, I would claim that we still are extracting valuable information about our data. Just knowing that this collection of variables does not provide enough information to accurately predict the store a customer visits is useful. We now know that we should 1) try a different outcome variable, 2) use different predictors, and/or 3) collect new data to help supplment what we have here. We also found some interesting patterns when looking at visualizations and the regression output.
+I think we are seeing a pattern over these guides of not quite being able to predict our outcomes as well as we'd like. Here, we had a few points of interest but it wasn't enough to give us great prediction accuracy Even though our models are not "successful" per se, I would claim that we still are extracting valuable information about our data. Just knowing that this collection of variables does not provide enough information to accurately predict the store a customer visits is useful. We now know that we should 1) try a different outcome variable, 2) use different predictors, and/or 3) collect new data to help supplement what we have here. We also found some interesting patterns when looking at visualizations and the regression output.
 
 The moral of the story is don't fear when your results aren't significant or aren't what you'd hoped. Think about what you were able to gain from the process. A model that doesn't work well is still progress and can tell you a lot about your data. Why didn't the model work? What could you do to change the model or update the data? Every pattern, trend, failure, and success allows us to learn something and make changes and suggestions for the future.
 
