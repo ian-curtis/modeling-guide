@@ -21,6 +21,7 @@ I will be setting the seed for the random generator so we can get the same resul
 library(tidyverse)
 library(tidymodels)
 library(GGally)
+library(performance)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -60,7 +61,6 @@ Second, we have to meet certain criteria. See, simple linear regression can be s
 
 * The relationship between the predictor variable and the response variable(s) should be linear
 * The errors of our predictions should be approximately normally distributed
-* Our predictor variable(s) should not be correlated with each other (not a problem in SLR)
 * There should be a constant variability in our errors
 * Our errors should be independent (we will not focus on this here)
 
@@ -81,7 +81,7 @@ $$
 $$
 \widehat{\text{rating}} = \hat{\beta_0} + \hat{\beta_1} * \text{unit_price}
 $$
-In each case, we are trying to find the values for $\hat{\beta_0}$ and $\hat{\beta_1}$ using the respective variable.
+In each case, we are trying to find the values for $\hat{\beta_0}$ and $\hat{\beta_1}$ using our predictor variable.
 
 ## Building the Model
 
@@ -122,14 +122,77 @@ In other words, because the slopes for both of the lines are very small, we have
 
 Let's see how the models perform! My guess is not very well based on the information so far.
 
-We can get a good idea of this by looking at $R^2$, or the proportion of the variance in `rating` we have explained.
-
 ```{r r2}
-glance(slr_mod_price)
-glance(slr_mod_total)
+model_performance(slr_mod_price)
+model_performance(slr_mod_total)
 ```
 
-When we use `unit_price`, we can explain 0.00711% of the variance in `rating` and with the log of `total`, 0.0088%. Not so good! Due to the similar $R^2$ values, I will be finishing the SLR section with only one model: the one with `log(total)`.
+We can get a good idea of this by looking at $R^2$, or the proportion of the variance in `rating` we have explained. When we use `unit_price`, we can explain 0.00711% of the variance in `rating` and with the log of `total`, 0.0088%. Not so good! There is very little difference between the two models. The AIC, or Akaike's informaiton criteria assess our error. We want to see it decrease as we look at different models. The same goes for the BIC, or Bayesian information criterion. We also want to see $R^2$ increase. 
+
+Due to the similar models, I will be finishing the SLR section with only one model: the one with `log(total)` which does seem to be the slightly "better" model here.
+
+The `performance` packages offers us a nice glance at some plots to help answer if we have met the assumptions.
+
+```{r}
+diagnostics <- plot(check_model(slr_mod_total, panel = FALSE))
+```
+
+### Linearity
+
+First, can we assume linearity between the response and the predictor?
+
+```{r}
+diagnostics[[2]]
+```
+
+Well, this is a great example of how most real life data is not going to be perfectly linear. This data certainly shows no linear pattern; in fact, this looks more like a random scatter with no pattern than anything else. It's close, but I wouldn't say that we have satisfied this condition. We can see as well that the reference line in the plot is not flat for lower fitted values.
+
+```{r correlation}
+cor(train$rating, log(train$total)) %>% 
+  round(5)
+```
+
+We can also see that the correlation between the two variables is very close to zero indicating that there is low evidence of a strong relationship between `rating` and `total`.
+
+
+### Constant Variability of Errors
+
+```{r}
+diagnostics[[3]]
+```
+
+
+Using the third plot, do we see any curvature of the reference line? Are the errors more spread out (vertically) at some points than others? I do not see evidence to assume this. At nearly every fitted value, the residuals span from about -2.5 to 2.5 and the line is very close to flat.
+
+### Normal Errors
+
+We can make a histogram of the errors to check for the normality assumption.
+
+```{r}
+ggplot(data = train_aug, aes(x = .resid)) +
+  geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
+  xlab("Residuals")
+```
+
+At first glance, this looks ok! It's not perfect by any means but there are some peaks in the middle and lower tails. However, a histogram is not the best tool to measure this as we are mostly eye-balling it. 
+
+```{r}
+diagnostics[[5]]
+```
+
+Let's use this plot, which is very similar to a traditional Q-Q plot, which plots our errors versus what we would expect for a perfectly normal distribution of errors. If our errors are close to normally distributed, we would want them to lie flat along the line and here we see some pretty wonky tails. I would not consider this assumption to be met.
+
+### Extreme Observations
+
+It's also a good idea to look at any extreme observations. It is possible that one or a few observations are driving the analysis and are skewing our results. 
+
+```{r}
+diagnostics[[4]]
+```
+
+We can look at the plot above to find observations with high leverage, or significantly different $x$ values (`log_total` values). I do not see any points outside of the dashed lines so we are ok here. The plot uses Cook's $d$, or Cook's distance, to quantify how influential a point is and we want to keep all values inside of the cutoff values for Cook's $d$ (the dashed lines).
+
+### Testing
 
 We can run the model on the testing dataset we created earlier to see how accurate the model is.
 
@@ -144,61 +207,18 @@ This has created two new columns to our dataset: `.pred` and `.resid`. Now we ha
 mean(test_aug$.resid)
 ```
 
-It looks like, on average, we over-predict `rating` by about 0.225 points.
+It looks like, on average, we over-predict `rating` by about 0.225 points. We can also plot our actual data versus the predicted data.
 
-Before making any final conclusions, let's look at our assumptions.
-
-### Linearity
-
-First, can we assume linearity between the response and the predictor?
-
-```{r unit-price-rating}
-train %>% 
-  ggplot(aes(x = log(total), y = rating)) +
+```{r total-rating}
+test_aug %>% 
+  ggplot(aes(x = .pred, y = rating)) +
   geom_point() +
-  labs(title = "Transaction Rating vs. Transaction Total",
-       x = "Log Total ($)",
-       y = "Rating")
+  labs(title = "Predicted Rating vs. Actual Rating",
+       x = "Predicted Rating",
+       y = "Actual Rating")
 ```
 
-Well, this is a great example of how most real life data is not going to be perfectly linear. This data certainly shows no linear patter; in fact, this looks more like a random scatter with no pattern than anything. I wouldn't say that we have satisfied this condition. It also doesn't quite make sense to run a regression analysis with these variables as there does not appear to be a relationship at all between the two.
-
-```{r correlation}
-cor(train$rating, log(train$total)) %>% 
-  round(5)
-```
-
-As we can see, the correlation is very close to zero indicating that there is low evidence of a linear relationship between `rating` and `total`.
-
-We can also check this with our errors. First, we need to calculate the errors for the training dataset (we previously found the errors for the testing dataset). Then we can plot the errors versus the predicted values.
-
-```{r}
-train_aug <- augment(slr_mod_total, new_data = train)
-
-ggplot(data = train_aug, aes(x = .pred, y = .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  xlab("Fitted values") +
-  ylab("Residuals")
-```
-
-We are looking for a random scatter of points (and not a pattern). We do see a random scatter here which is a good sign!
-
-### Constant Variability of Errors
-
-Using the above plot, do we see any curvature around the dashed line? Are the errors more spread out (vertically) at some points than others? I do not see evidence to assume this. At nearly every fitted value, the residuals span from about -2.5 to 2.5.
-
-### Normal Errors
-
-We can make a histogram of the errors to check for the normality assumption.
-
-```{r}
-ggplot(data = train_aug, aes(x = .resid)) +
-  geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
-  xlab("Residuals")
-```
-
-I would say we meet this assumption as well!
+We didn't do very good. Notice how the predicted rating only ranges from about 6.97 to 7.06 whereas the actual rating ranges from 4 to 10. This is produces some of our huge error terms and leads to a poor model and failed model assumptions.
 
 ## Wrap Up
 

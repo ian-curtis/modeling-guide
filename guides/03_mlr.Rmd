@@ -21,6 +21,7 @@ I will be setting the seed for the random generator so we can get the same resul
 library(tidyverse)
 library(tidymodels)
 library(GGally)
+library(performance)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -35,7 +36,7 @@ Alright! Now that we have that set, we'll use the `train` data for all the model
 
 # Multiple Linear Regression
 
-Above, we weren't able to predict `rating` with one variable alone. What if we could use multiple variables in regression model? Maybe then we can explain more variance in `rating`. 
+Earlier, we weren't able to predict `rating` with one variable alone. What if we could use multiple variables in regression model? Maybe then we can better predict `rating`. 
 
 ## Requirements
 
@@ -49,8 +50,8 @@ We also still have to meet the regression assumptions:
 
 * The relationship between the predictor variable and the response variables should be linear
 * The errors of our predictions should be approximately normally distributed
-* Our predictor variables should not be correlated with each other
 * There should be a constant variability in our errors
+* NEW: Our predictor variables should not be correlated with each other
 * Our errors should be independent (we will not focus on this here)
 
 ## Selecting Variables
@@ -68,98 +69,182 @@ So let's start with that full model. These are the variables that I think might 
 * Unit Price
 * Pay Method
 
-We will start by creating a model that includes all of these variables and go from there.
+It is also important to think about how these predictor variables interact with each other. We should consider adding in any interaction terms if we think two variables influence each other. I think it is possible that customer member status might influence their pay method and perhaps gender and purchase total interact. However, we shouldn't rely solely on our instinct. Before jumping right into making a model, we should plot the variables and visualize any possible interactions.
+
+## Looking at the Variables
+
+```{r}
+train_subset <- train %>% 
+  select(rating, store, customer_type, gender, total, unit_price, pay_method)
+test_subset <- test %>% 
+  select(rating, store, customer_type, gender, total, unit_price, pay_method)
+```
+
+```{r}
+ggpairs(train_subset)
+```
+
+This is a large plot that shows the relationships between each pair of variables. There isn't a lot that stands out here but I do want to notice a few things:
+
+* `rating`, our response variable, is approximately normal
+* `total` is skewed right
+* There is a moderately strong correlation between `unit_price` and `total`
+* `customer_type` and `gender` may be related
+* `store` and `gender` may be related
+* `store` and `pay_method` may be related
+
+Based on those observations I would like to make a few changes. I will be taking the log of `total` to help correct the skew and I will be adding interaction variables between the related pairs mentioned above. 
 
 ## Building the Model
 
-Because we are still working in linear regression, we can use the same `lm_spec` engine from above to drive our model building. This time, we'll use a different formula to fit the model. Notice we are back on the training data because we are training a new model. We once again will take the log of `total`.
+Because we are still working in linear regression, we can use the same `lm_spec` engine from SLR to drive our model building. This time, we'll use a different formula to fit the model which will include the log of total and some interaction terms.
 
 ```{r mlr-full-fit}
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
 mlr_mod_full <- lm_spec %>% 
-  fit(rating ~ store + customer_type + gender + log(total) + unit_price + pay_method, data = train)
+  fit(rating ~ store + customer_type + gender + log(total) + unit_price + pay_method + unit_price*log(total) + customer_type*gender + store*gender + store*pay_method, data = train_subset)
 ```
 
 Once we have done that, we can look at the output:
 
 ```{r mlr-full-output}
-tidy(mlr_mod_full)
+tidy(mlr_mod_full) %>% 
+  mutate(p.value = format.pval(p.value, digits = 4))
 ```
 
-We see that R has created dummy variables for us for each of our categorical variables. We also see, once again, that the values in the `estimate` column are very small. It seems that each variable does not do a lot on it's own to predict `rating`. That being said, each individual variable is statistically significant indicating that each variable may provide some insight into predicting rating when used with the other variables.
+We see that R has created dummy variables for us for each of our categorical variables. However, because of this, we have a very large number of predictor variables. Our goal is to reduce the amount of predictor variables down to the essentials. We want to predict `rating` with the most accuracy but with the fewest variables we can.
 
-Let's see what the $R^2$ value is to see if we explained any more variance in `rating` than with SLR.
+One way to judge this is to look at the p-values for each predictor which essentially looks at if the addition of one variable contributes something to the model (by comparing a model with the variable to one without). However, I would caution against relying solely on p-values. They are great to help us get an idea of the tendencies of the model and can give us a direction about where to go next but I personally say that they do not and in most cases should not drive decision making. I will not be ignoring p-values but I also will not be using them as a hard and fast rule for including or not including a variable.
 
-```{r}
-glance(mlr_mod_full)
-```
+For instance, look at our model. Not a single variable is significant, at the typical cutoff of 0.05. To me, this does not mean that we should scratch every variable and try again. It does not mean that these variables are useless at predicting `rating`. This indicates to me that maybe we do not have enough information in the data to predict `rating` accurately or maybe we have too many variables.
 
-Looks like we explain 0.292% of the variance in rating! This is a small increase from before, even by including quite a few more variables. $R^2$ will always increase when including more variables and the fact that we still haven't explained even 1% of the variance in `rating` means that we still aren't doing a great job. 
+I think it's also important to look at the estimates. Some of the estimates have larger values, like Store B. Here, if a certain transaction was done at Store B and all other variables were held constant, we would predict the rating of a transaction to increase by 0.411. Other estimates have very small values, such as the interaction between `unit_price` and `total`. With this term, for every dollar increase of the product of `unit_price` and `total`, we would expect the predicted rating to decrease by 0.00343 points. This does not necessarily mean that this interaction variable has a marginally small effect on rating. Remember that the values for the log of total and unit price can be pretty high and can influence the prediction. The highest `unit_price` value in `train_subset` is 99.96 with a corresponding total of 735. Multiplying the log of the total by the unit price gives 659.7231. If we insert that into our model, we can say that for this observation we would expect the predicted rating to decrease by $659.7231*0.00343 = 2.263$ points! 
 
-Even though this model isn't great, I do want to explore a different model by removing some of the variables to see if we can do equally as good with fewer variables. Why have extra variables in the model if we can do equally as good or slightly worse with a model that has less variables?
+So it's important to consider the practical piece of your model. Even if a term doesn't meet the cutoff for its p-value, it may be close enough to still merit inclusion in the final model, especially if you think that it makes sense to include in the context of the dataset.
 
-Looking at the regression output, the log of `total` and `unit_price` seem to have the least effect in terms of their `estimate`. Let's remove them and see if anything changes.
+In the end, it is up to you which variables to use. There are variable selection procedures out there (forward selection, backward selection, and stepwise selection) that can help you with this if you choose to use them. You may also be interested in dimension reduction techniques such as Principal Components Analysis (PCA) and other factor analysis procedures. These are all out of the scope of this guide but can be useful in certain cases. I would recommend treating each method with some skepticism as I believe that no method will be able to tell you with 100% certainty which variables to include (and some of the methods produce models that are tricky to interpret). With the model here, I will be using my judgement by looking at the p-values, values for the estimates, and thinking about the context of the data to determine if I think a variable is useful.
+
+I'll detail my thoughts below:
+
+* We saw a fairly high correlation between the unit price of an item and the log of the total. The interaction term has a fairly low p-value, an influential estimate value, and the individual variables have a noticeable estimate and low p-values. Furthermore, it does make some logical sense for this to be used to predict rating: higher prices make customers unhappy.
+* I'm not liking the p-values of `customer_type` and `payment_method` and most of the interactions including it. They don't seem significant and the estimate values are pretty small.
+* We may be getting somewhere with the gender and store interaction. I see some nice p-values and some larger estimates. This isn't an interaction I was expecting but, if true, this could be very useful information to the company to help them with advertising.
+* Recommended practice for regression is, if including an interaction variable, you should also include the individual variables that make up that interaction, even if they are not significant or don't have a large effect.
+
+With all this being said, let's make a reduced model!
 
 ```{r mlr-reduced}
 mlr_mod_reduced <- lm_spec %>% 
-  fit(rating ~ store + customer_type + gender + pay_method, data = train)
-tidy(mlr_mod_reduced)
-glance(mlr_mod_reduced)
+  fit(rating ~ store + gender + log(total) + unit_price + store*gender + log(total)*unit_price, data = train_subset)
+
+tidy(mlr_mod_reduced) %>% 
+  mutate(p.value = format.pval(p.value, digits = 4))
 ```
 
-We see that we still explain 0.282% of the variation in `rating` even by removing two variables. I think it is justified to keep these two out of the (admittedly poor) model.
+I'm liking this model better. We have similar results (low p-values and decently-sized estimates) and we are using less variables. Let's stick with this model for the rest of the guide.
 
 ## Assessing the Model
 
-Now let's assess the model and see if regression was a good choice. We already have seen indications that it is not but it's always good to check the assumptions.
+Now let's assess the model and see if regression was a good choice. We'll start with overall performance and then check the assumptions.
+
+```{r}
+model_performance(mlr_mod_full)
+model_performance(mlr_mod_reduced)
+```
+
+We will look at the AIC and BIC as we did with SLR and I'd also like introduce the Root Mean Square Error (RMSE). The RMSE is the standard deviation of our prediction errors. We'd like this to be small as that means our errors are less spread out (and therefore smaller). 
+
+We can't interpret any of these statistics alone; we use them to compare between models which is why I ran the model performance function on both our full model and our reduced model. We do see both the AIC and the BIC decrease slightly which is good. Our RMSE actually increases here but by a very little amount. My biggest takeaway is that the reduced model and the full model are very similar in terms of their performance. In cases like this, we would prefer to choose the model with the fewest variables. Why use more when we can do similarly with few? 
+
+Another thing to note is that our RMSE is pretty large compared to the range of the response variable, `rating`. Most of our errors are around 1.7 with some extending beyond that (bigger errors) and some less. Given that `rating` only spans from 4 to 10, an error of 1.7 could mean the difference between a neutral customer and a satisfied customer. Because the error is so big compared to the response, I don't have much confidence in the accuracy of this model.
+
+Now on to the assumptions. Most of our assumptions are the same as SLR; however, we do have one more which involves collinearity (correlation between predictors).
+
+```{r}
+diagnostics <- plot(check_model(mlr_mod_reduced, panel = FALSE))
+```
+
 
 ### Linearity
 
 First, can we assume linearity between the response and the predictor?
 
-As with SLR, we can use the errors for this. First, we need to calculate the errors for the training dataset (we previously found the errors for the testing dataset). Then we can plot the errors versus the predicted values.
-
 ```{r}
-train_aug <- augment(mlr_mod_reduced, new_data = train)
-
-ggplot(data = train_aug, aes(x = .pred, y = .resid)) +
-  geom_point() +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  labs(title = "Errors vs. Predicted",
-       subtitle = "MLR Reduced Model") +
-  xlab("Fitted values") +
-  ylab("Errors")
+diagnostics[[2]]
 ```
 
-We are looking for a random scatter of points (and not a pattern). We do see a random scatter here with no general pattern but I do see a column-like pattern. Also, the model does not predict ratings below 6.8 or higher than 7.3 which means we have some pretty high errors terms, seen with the points above 2 and below -2.
+We are looking for a random scatter of points (and not a pattern). We do see a random scatter here with no general pattern. This plot looks much better than the one we saw for our SLR model. Even though there is a little lift of the line towards the lower end of the predicted values, I'm not concerned.
 
 ### Constant Variability of Errors
 
-Using the above plot, do we see any curvature around the dashed line? Are the errors more spread out (vertically) at some points than others? As before, I do not see evidence to say that we have violated this assumption. At nearly every fitted value, the residuals span from about -2.5 to 2.5.
+```{r}
+diagnostics[[3]]
+```
+
+As with SLR, we want to see a flat line which would indicate that our errors have a similar variability (spread along the y-axis) for all predicted values (the x-axis). We don't want a rainbow or a cone shape and we want to see the reference line be flat. It is true that we have a larger clump of points above the solid line which is bowing the line up slightly but I don't see much reason for concern here. 
 
 ### Normal Errors
 
 We can make a histogram of the errors to check for the normality assumption.
 
 ```{r}
+train_aug <- augment(mlr_mod_reduced, new_data = train)
+
 ggplot(data = train_aug, aes(x = .resid)) +
   geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
   xlab("Residuals")
 ```
 
-I would say we meet this assumption as well!
+Once again, histograms can be slightly deceiving. This plot does show a decent bell-curve shape with some peaks in the center and less in the two ends. However, it would be nice to see less peaks aroune -2 and 2. Let's also look at the diagnostic plot.
+
+```{r}
+diagnostics[[6]]
+```
+
+Not so great! The tail ends of the dots stray far from the line and the prediction intervals (the shaded grey part) have a very large range. Based on this plot, I would not say we have met this assumption and should question the results of our model.
 
 ### Colinearity Between Predictors
 
-We also should make sure that our predictor variables are not correlated with each other. If they are, we can consider create an interaction term (which would indicate that the two variables work together) or we should remove one of the correlated variables (under the theory that if they are both related and/or measuring the same thing, then only one is needed). We can look at all of this by creating a plot matrix.
+We also should make sure that our predictor variables are not correlated with each other. Recall earlier how we did see some slight correlation between some of our variables and we created an interaction term to account for this. Using interaction terms is one way of helping to meet this assumption. Another way is to simply remove one of the correlated variables from the model.
 
-```{r corr-mtx}
-train_subset <- train %>% 
-  select(-c(id, product_class, qty, total, unit_price, date, time, subtotal))
+We can use variance inflation factors to look at colinearity. However, you may have noticed above when we generated our diagnostic plots that a warning message was printed. It said 
 
-ggpairs(train_subset)
+> Model has interaction terms. VIFs might be inflated.
+  You may check multicollinearity among predictors of a model without interaction terms.
+  
+R has recognized that we have an interaction term. Naturally, we can expect the interaction term and the variables that make up that interaction term to be correlated. In fact, if we look at the plot here,
+
+```{r}
+diagnostics[[5]]
+check_collinearity(mlr_mod_reduced)
 ```
 
-This is not intended to be a detailed look at all pairs of variables but can give us some insight into the distributions of each individual variable as well as what things look like across variables. I don't see any need for an interaction variable nor do I think that we have evidence for any correlation across predictors.
+we see that the interaction between the log of the total and the unit price as well as the unit price variable itself have some potential for high correlation with the other variables. This is a problem, but let's try checking this assumption on the model without any interactions.
+
+
+```{r}
+mlr_mod_noint <- lm_spec %>% 
+  fit(rating ~ store + gender + log(total) + unit_price, data = train_subset)
+plot(check_model(mlr_mod_noint, panel = FALSE))[[5]]
+check_collinearity(mlr_mod_noint)
+```
+
+Removing our interactions has helped with our VIFs so I would consider this assumption to be met.
+
+### Extreme Observations
+
+It's also a good idea to look at any extreme observations. It is possible that one or a few observations are driving the analysis and are skewing our results. 
+
+```{r}
+diagnostics[[4]]
+```
+
+We can look at the plot above to find observations with high leverage, or significantly different $x$ values (`log_total` values). I do not see any points outside of the dashed lines so we are ok here. The plot uses Cook's $d$, or Cook's distance, to quantify how influential a point is and we want to keep all values inside of the cutoff values for Cook's $d$ (the dashed lines).
+
+## Testing Data
 
 Let's also take a quick peek at our testing data. How well does the model perform?
 
@@ -175,11 +260,11 @@ ggplot(data = test_aug, aes(x = .pred, y = .resid)) +
   ylab("Errors")
 ```
 
-It looks like we still see a big range in our errors (between -3 and 3). This is a big range for errors. We also see again that the fitted values range from 6.8 to about 7.3 which doesn't not represent the `rating` variable accurately.
+It looks like we still see a big range in our errors (between -3 and 3). We also see again that the fitted values range from 6.8 to about 7.3 which doesn't not represent the `rating` variable accurately.
 
 ## Wrap Up
 
-All in all, regression was not the best model to use to predict `rating`. The variables in the dataset simply do not hold enough information in order to make good predictions. We saw very low $R^2$ values, very small estimates for our linear model, and a high error rate. We also saw some slightly concerning error plots indicating that the regression assumptions may not be met which further questions the validity and accuracy of our results.
+All in all, regression was not the best model to use to predict `rating`. The variables in the dataset simply do not hold enough information in order to make good predictions. We saw very low $R^2$ values, a high error rate, we violated an assumption, and our predictions do not reflect the full range of possible values for our response. Although we won't move forward with this example, it would be a good idea to explore the variables more. Perhaps we could create a variable of our own to use in the model. Perhaps we need to collect more data (more observations and more variables) to improve our accuracy. Perhaps linear regression just isn't the best model choice for predicting rating. There definitely is more work that can be done here to try and predict a customer's rating of a transaction (and hence their satisfaction).
 
 
 
