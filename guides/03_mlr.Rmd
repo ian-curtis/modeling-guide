@@ -1,13 +1,18 @@
 ---
 title: "Multiple Linear Regression"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
+nocite: |
+  @dataset, @islr, @sta_github
 ---
 
 # Welcome
 
-Hey there! This is the second guide in my Modeling Guide with R series. In the previous guide, we performed some preliminary explorations on our dataset and took a look at a few of the variables. We cleaned the dataset up a bit and exported it so we could read it again in later guides.
+Hey there! This is the third guide in my Modeling Guide with R series. In the previous guide, we performed some preliminary explorations on our dataset and took a look at a few of the variables. We cleaned the dataset up a bit and exported it so we could read it again in later guides.
 
 This page will focus on both simple and multiple linear regression. Although, I cannot cover all of the details and fine use cases of linear regression, we will explore some of the key ideas to focus on when creating and analyzing a linear regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. In both simple and linear regression, we'll use train/test validation and we'll also look at several candidate models.
 
@@ -17,11 +22,13 @@ The code below imports our packages and the data we cleaned in the previous guid
 
 I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
 
-```{r load-items}
+```{r load-items, message = F}
 library(tidyverse)
 library(tidymodels)
 library(GGally)
 library(performance)
+library(knitr)
+library(kableExtra)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -30,6 +37,16 @@ retail_split <- initial_split(retail, prop = .8, strata = store)
 
 train <- training(retail_split)
 test <- testing(retail_split)
+```
+
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
 ```
 
 Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
@@ -73,14 +90,14 @@ It is also important to think about how these predictor variables interact with 
 
 ## Looking at the Variables
 
-```{r}
+```{r subset-vars}
 train_subset <- train %>% 
   select(rating, store, customer_type, gender, total, unit_price, pay_method)
 test_subset <- test %>% 
   select(rating, store, customer_type, gender, total, unit_price, pay_method)
 ```
 
-```{r}
+```{r var-mtx, message = F, fig.alt = "Plot matrix of all variables plotted against each other"}
 ggpairs(train_subset)
 ```
 
@@ -100,19 +117,26 @@ Based on those observations I would like to make a few changes. I will be taking
 Because we are still working in linear regression, we can use the same `lm_spec` engine from SLR to drive our model building. This time, we'll use a different formula to fit the model which will include the log of total and some interaction terms.
 
 ```{r mlr-full-fit}
+train_subset <- train_subset %>% 
+  mutate(log_total = log(total))
+test_subset <- test_subset %>% 
+  mutate(log_total = log(total))
+
 lm_spec <- linear_reg() %>%
   set_mode("regression") %>%
   set_engine("lm")
 
 mlr_mod_full <- lm_spec %>% 
-  fit(rating ~ store + customer_type + gender + log(total) + unit_price + pay_method + unit_price*log(total) + customer_type*gender + store*gender + store*pay_method, data = train_subset)
+  fit(rating ~ store + customer_type + gender + log_total + unit_price + pay_method + unit_price*log_total + customer_type*gender + store*gender + store*pay_method, data = train_subset)
 ```
 
 Once we have done that, we can look at the output:
 
 ```{r mlr-full-output}
 tidy(mlr_mod_full) %>% 
-  mutate(p.value = format.pval(p.value, digits = 4))
+  mutate(p.value = format.pval(p.value, digits = 4)) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
 We see that R has created dummy variables for us for each of our categorical variables. However, because of this, we have a very large number of predictor variables. Our goal is to reduce the amount of predictor variables down to the essentials. We want to predict `rating` with the most accuracy but with the fewest variables we can.
@@ -138,10 +162,12 @@ With all this being said, let's make a reduced model!
 
 ```{r mlr-reduced}
 mlr_mod_reduced <- lm_spec %>% 
-  fit(rating ~ store + gender + log(total) + unit_price + store*gender + log(total)*unit_price, data = train_subset)
+  fit(rating ~ store + gender + log_total + unit_price + store*gender + log_total*unit_price, data = train_subset)
 
 tidy(mlr_mod_reduced) %>% 
-  mutate(p.value = format.pval(p.value, digits = 4))
+  mutate(p.value = format.pval(p.value, digits = 4)) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
 I'm liking this model better. We have similar results (low p-values and decently-sized estimates) and we are using less variables. Let's stick with this model for the rest of the guide.
@@ -150,9 +176,12 @@ I'm liking this model better. We have similar results (low p-values and decently
 
 Now let's assess the model and see if regression was a good choice. We'll start with overall performance and then check the assumptions.
 
-```{r}
-model_performance(mlr_mod_full)
-model_performance(mlr_mod_reduced)
+```{r performance}
+model_performance(mlr_mod_full) %>% 
+  kable()
+
+model_performance(mlr_mod_reduced) %>% 
+  kable()
 ```
 
 We will look at the AIC and BIC as we did with SLR and I'd also like introduce the Root Mean Square Error (RMSE). The RMSE is the standard deviation of our prediction errors. We'd like this to be small as that means our errors are less spread out (and therefore smaller). 
@@ -163,7 +192,7 @@ Another thing to note is that our RMSE is pretty large compared to the range of 
 
 Now on to the assumptions. Most of our assumptions are the same as SLR; however, we do have one more which involves collinearity (correlation between predictors).
 
-```{r}
+```{r build-diagnostics}
 diagnostics <- plot(check_model(mlr_mod_reduced, panel = FALSE))
 ```
 
@@ -172,16 +201,18 @@ diagnostics <- plot(check_model(mlr_mod_reduced, panel = FALSE))
 
 First, can we assume linearity between the response and the predictor?
 
-```{r}
-diagnostics[[2]]
+```{r linearity, fig.alt = "Predicted values versus residuals. Mostly random scatter with a few random points out in the left of the plot."}
+diagnostics[[2]] +
+  my_theme
 ```
 
 We are looking for a random scatter of points (and not a pattern). We do see a random scatter here with no general pattern. This plot looks much better than the one we saw for our SLR model. Even though there is a little lift of the line towards the lower end of the predicted values, I'm not concerned.
 
 ### Constant Variability of Errors
 
-```{r}
-diagnostics[[3]]
+```{r heteroscedasticity, fig.alt = "Predicted values versus square root of standardized residuals. Most values of the predicted rating have similar variability but less variabtility is present at the tail ends."}
+diagnostics[[3]] +
+  my_theme
 ```
 
 As with SLR, we want to see a flat line which would indicate that our errors have a similar variability (spread along the y-axis) for all predicted values (the x-axis). We don't want a rainbow or a cone shape and we want to see the reference line be flat. It is true that we have a larger clump of points above the solid line which is bowing the line up slightly but I don't see much reason for concern here. 
@@ -190,18 +221,20 @@ As with SLR, we want to see a flat line which would indicate that our errors hav
 
 We can make a histogram of the errors to check for the normality assumption.
 
-```{r}
-train_aug <- augment(mlr_mod_reduced, new_data = train)
+```{r normal-errors}
+train_aug <- augment(mlr_mod_reduced, new_data = train_subset)
 
 ggplot(data = train_aug, aes(x = .resid)) +
   geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
-  xlab("Residuals")
+  xlab("Residuals") +
+  my_theme
 ```
 
-Once again, histograms can be slightly deceiving. This plot does show a decent bell-curve shape with some peaks in the center and less in the two ends. However, it would be nice to see less peaks aroune -2 and 2. Let's also look at the diagnostic plot.
+Once again, histograms can be slightly deceiving. This plot does show a decent bell-curve shape with some peaks in the center and less in the two ends. However, it would be nice to see less peaks around -2 and 2. Let's also look at the diagnostic plot.
 
-```{r}
-diagnostics[[6]]
+```{r qq-plot, fig.alt = "Sample points should lie flat along the horizontal line at 0. Points are above the line on the left and below the line on the right, making an S shape."}
+diagnostics[[6]] +
+  my_theme
 ```
 
 Not so great! The tail ends of the dots stray far from the line and the prediction intervals (the shaded grey part) have a very large range. Based on this plot, I would not say we have met this assumption and should question the results of our model.
@@ -210,36 +243,40 @@ Not so great! The tail ends of the dots stray far from the line and the predicti
 
 We also should make sure that our predictor variables are not correlated with each other. Recall earlier how we did see some slight correlation between some of our variables and we created an interaction term to account for this. Using interaction terms is one way of helping to meet this assumption. Another way is to simply remove one of the correlated variables from the model.
 
-We can use variance inflation factors to look at colinearity. However, you may have noticed above when we generated our diagnostic plots that a warning message was printed. It said 
+We can use variance inflation factors to look at collinearity. However, you may have noticed above when we generated our diagnostic plots that a warning message was printed. It said 
 
 > Model has interaction terms. VIFs might be inflated.
   You may check multicollinearity among predictors of a model without interaction terms.
   
 R has recognized that we have an interaction term. Naturally, we can expect the interaction term and the variables that make up that interaction term to be correlated. In fact, if we look at the plot here,
 
-```{r}
-diagnostics[[5]]
+```{r collinearity-plot, fig.alt = "High VIF for unit price and unit price times log of total, moderate VIF for store and store times gender."}
+diagnostics[[5]] +
+  my_theme
 check_collinearity(mlr_mod_reduced)
 ```
 
 we see that the interaction between the log of the total and the unit price as well as the unit price variable itself have some potential for high correlation with the other variables. This is a problem, but let's try checking this assumption on the model without any interactions.
 
 
-```{r}
+```{r model-no-int, fig.alt = "Low VIF values for all variables when interaction is removed."}
 mlr_mod_noint <- lm_spec %>% 
   fit(rating ~ store + gender + log(total) + unit_price, data = train_subset)
-plot(check_model(mlr_mod_noint, panel = FALSE))[[5]]
+
+plot(check_model(mlr_mod_noint, panel = FALSE))[[5]] +
+  my_theme
 check_collinearity(mlr_mod_noint)
 ```
 
-Removing our interactions has helped with our VIFs so I would consider this assumption to be met.
+Removing our interactions has helped with our VIFs so I would consider this assumption to be met although I do want to question `store` due to the large margin of error on its VIF.
 
 ### Extreme Observations
 
 It's also a good idea to look at any extreme observations. It is possible that one or a few observations are driving the analysis and are skewing our results. 
 
-```{r}
-diagnostics[[4]]
+```{r leverage, fig.alt = "No leverage exceeds 0.05 or the contour lines at 0.9 and -0.9."}
+diagnostics[[4]] +
+  my_theme
 ```
 
 We can look at the plot above to find observations with high leverage, or significantly different $x$ values (`log_total` values). I do not see any points outside of the dashed lines so we are ok here. The plot uses Cook's $d$, or Cook's distance, to quantify how influential a point is and we want to keep all values inside of the cutoff values for Cook's $d$ (the dashed lines).
@@ -249,7 +286,7 @@ We can look at the plot above to find observations with high leverage, or signif
 Let's also take a quick peek at our testing data. How well does the model perform?
 
 ```{r mlr-test}
-test_aug <- augment(mlr_mod_reduced, new_data = test)
+test_aug <- augment(mlr_mod_reduced, new_data = test_subset)
 
 ggplot(data = test_aug, aes(x = .pred, y = .resid)) +
   geom_point() +
@@ -257,7 +294,8 @@ ggplot(data = test_aug, aes(x = .pred, y = .resid)) +
   labs(title = "Errors vs. Predicted",
        subtitle = "MLR Reduced Model Testing Dataset") +
   xlab("Fitted values") +
-  ylab("Errors")
+  ylab("Errors") +
+  my_theme
 ```
 
 It looks like we still see a big range in our errors (between -3 and 3). We also see again that the fitted values range from 6.8 to about 7.3 which doesn't not represent the `rating` variable accurately.
@@ -266,5 +304,7 @@ It looks like we still see a big range in our errors (between -3 and 3). We also
 
 All in all, regression was not the best model to use to predict `rating`. The variables in the dataset simply do not hold enough information in order to make good predictions. We saw very low $R^2$ values, a high error rate, we violated an assumption, and our predictions do not reflect the full range of possible values for our response. Although we won't move forward with this example, it would be a good idea to explore the variables more. Perhaps we could create a variable of our own to use in the model. Perhaps we need to collect more data (more observations and more variables) to improve our accuracy. Perhaps linear regression just isn't the best model choice for predicting rating. There definitely is more work that can be done here to try and predict a customer's rating of a transaction (and hence their satisfaction).
 
+# References
 
+<div id = "refs"></div>
 

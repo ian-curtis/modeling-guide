@@ -1,8 +1,13 @@
 ---
 title: "Logistic Regression"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
+nocite: |
+  @dataset, @islr, @performance, @log_reg_book, @so_tidymodels_q, @so_tidymodels_a, @sta_github
 ---
 
 # Welcome
@@ -15,13 +20,15 @@ The code below imports our packages and the data we cleaned in the first guide. 
 
 I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
 
-```{r load-items}
+```{r load-items, message = F}
 library(tidyverse)
 library(tidymodels)
 library(GGally)
 library(gvsu215)
 library(car)
 library(performance)
+library(knitr)
+library(kableExtra)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -30,6 +37,16 @@ retail_split <- initial_split(retail, prop = .8, strata = store)
 
 train <- training(retail_split)
 test <- testing(retail_split)
+```
+
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
 ```
 
 Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
@@ -54,7 +71,7 @@ First, let's decide what we want to predict. Again, we need a variable that has 
 
 We should also define our "base" level for customer type or which type we want to compare everything to. I am going to create a true binary variable for gender which takes on a value of 1 if a customer is a member and 0 if they are not. We also need to coerce this variable into an R factor in order for the code later on to work.
 
-```{r}
+```{r member-fctr}
 train <- train %>% 
   mutate(member = as.factor(ifelse(customer_type == "Member", 1, 0)))
 
@@ -77,38 +94,41 @@ I would like to start with:
 
 Before beginning, we should look at our variables to see if we need to apply any transformations or add any interaction variables.
 
-```{r}
+```{r subset-vars, message = F, fig.alt = "Plot matrix of each variable plotted against the others."}
 train_subset <- train %>% 
   select(member, store, gender, product_class, pay_method, rating, total)
 
 test_subset <- test %>% 
   select(member, store, gender, product_class, pay_method, rating, total)
 
-ggpairs(train_subset)
+ggpairs(train_subset) +
+  my_theme
 ```
 
 My main observation here is that `total` is skewed right which is causing some outliers with the other variables. The values for `total` can also get quite large. If we're not careful, these large values could influence our results.
 
 Here is that distribution up close:
 
-```{r}
+```{r hist-total, fig.alt = "Skewed right distribution of total. Median around $200, max around $1100."}
 train_subset %>% 
   ggplot(aes(total)) +
-  geom_histogram(binwidth = 20, color = "black") +
+  geom_histogram(binwidth = 20, color = "black", fill = "#099392") +
   labs(x = "Total ($)",
        y = "Count",
-       title = "Distribution of Transaction Totals")
+       title = "Distribution of Transaction Totals") +
+  my_theme
 ```
 
 Previously we used the log to help correct this. Let's try something different here and take the square root of `total` to help bring down those extreme values.
 
-```{r}
+```{r log-total-hist, message = F, fig.alt = "Approximately normal distribution of the square root of total."}
 train_subset %>% 
   ggplot(aes(sqrt(total))) +
-  geom_histogram(color = "black") +
+  geom_histogram(color = "black", fill = "#099392") +
   labs(x = "Total",
        y = "Count",
-       title = "Distribution of the Square Root of Transaction Totals")
+       title = "Distribution of the Square Root of Transaction Totals") +
+  my_theme
 ```
 
 That looks better! This is not ideal as it affects our interpretation of results but it does help to fix the skewness. I don't see much evidence for creating an interaction variable for this model. However, I originally considered making one for store vs. gender and/or pay method vs. gender. I don't think they'll be necessary but I will include them in our first model nonetheless.
@@ -136,14 +156,16 @@ This should look slightly familiar to linear regression! We have a list of predi
 
 To build the model, we use similar code as before. This time, we are using the `logistic_reg()` function rather than the `linear_reg()` function.
 
-```{r}
+```{r build-model}
 log_spec <- logistic_reg() %>%
   set_engine("glm")
 
 log_mod_full <- log_spec %>%
   fit(member ~ store + gender + product_class + pay_method + rating + store*gender + pay_method*gender, data = train_subset, family = "binomial")
 
-tidy(log_mod_full)
+tidy(log_mod_full) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
 The tricky part about logistic regression is the interpretation. Since are predicting the *log odds* of obtaining a customer that is a member, each value in the `estimate` column above can be interpreted as the *change in the log odds* of finding a member for a unit increase in the respective $X$ variable.
@@ -154,19 +176,23 @@ One thing to notice here is that none of the p-values for the estimates are stat
 
 We can also explore our variables a little bit further. Using the following plot, we can look at the distribution of each of our variables separated by the member status of a customer. I will be dropping the interaction variables since they didn't seem to have much of an effect, as expected.
 
-```{r}
-ggbivariate(train, outcome = "customer_type", explanatory = c("store", "gender", "product_class", "pay_method", "rating"))
+```{r bivariate-plots}
+ggbivariate(train, outcome = "customer_type", explanatory = c("store", "gender", "product_class", "pay_method", "rating")) +
+  scale_fill_brewer(palette = "Dark2") +
+  my_theme
 ```
 
 My biggest takeaway here is that we have a pretty even split between members and non-members. In other words, both members and non-members engage in similar transactions. It may not be possible to accurately predict member status using the information provided in this dataset.
 
 With that being said, I would like to at least try a reduced model to see what the results are. I will use the p-values from above as well as the parameter estimates to guide my decision making and to create a reduced model. Some of these variables don't seem to be very useful at predicting member status so let's remove them from the model and try again, this time with just `product_class` and `store`.
 
-```{r}
+```{r reduced-model}
 log_mod_reduced <- log_spec %>%
   fit(member ~ product_class + store, data = train_subset, family = "binomial")
 
-tidy(log_mod_reduced)
+tidy(log_mod_reduced) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
 This model isn't much better but we do see some evidence that certain product classes and stores are more associated with a member than otherwise. For instance, if a customer purchases a food/beverage item, the log odds of them being a member of the company increased by about 0.352. We can also see this with sports and travel goods. Perhaps members get a slight discount on items in these areas so they purchase more. I would be interested to explore this idea more, especially if I had more data and if I could explore purchase tendencies over time.
@@ -188,7 +214,8 @@ ggplot(data = log_aug, aes(x = .pred_class, y = member)) +
   labs(x = "Predicted Member Status", 
        y = "Actual Member Status", 
        title = "Member Status: Predicted vs. Actual",
-       subtitle = "Training Data")
+       subtitle = "Training Data") +
+  my_theme
     
 ```
 
@@ -198,7 +225,7 @@ The ideal situation is 100% prediction accuracy where all of the points lie at (
 
 My main concern is that there is a roughly equal amount of observations in each quadrant. The model seems to not do much better than us just guessing the member status in which case we would expect to get about 50% accuracy. Let's see the actual numbers of our predictions.
 
-```{r log-mod-tbl}
+```{r log-mod-tbl, message = F}
 log_aug %>% 
   rename("Predicted" = .pred_class,
          "Actual" = member) %>% 
@@ -211,9 +238,6 @@ We see that we got $214 + 203 = 417$ observations correctly predicted which mean
 It's also a good idea to check our prediction accuracy with the testing dataset, although I don't have much hope.
 
 ```{r log-test-accuracy}
-test <- test %>% 
-  mutate(member = ifelse(customer_type == "Member", 1, 0))
-
 log_aug_test <- augment(log_mod_reduced, type.predict = "response", 
                       type.residuals = "deviance", new_data = test)
 
@@ -223,7 +247,8 @@ ggplot(data = log_aug_test, aes(x = .pred_class, y = member)) +
   labs(x = "Predicted Member Status", 
        y = "Actual Member Status", 
        title = "Member Status: Predicted vs. Actual",
-       subtitle = "Testing Data")
+       subtitle = "Testing Data") +
+  my_theme
 
 log_aug_test %>% 
   rename("Predicted" = .pred_class,
@@ -234,9 +259,12 @@ log_aug_test %>%
 
 We see similar results from the training data. We did correctly predict some observations, but there are still quite a handful that we missed. To quantify it, we correctly predicted 105 out of 201 customer member statuses which gives an accuracy rate of 52.24%.
 
-```{r}
-model_performance(log_mod_full)
-model_performance(log_mod_reduced)
+```{r performance}
+model_performance(log_mod_full) %>% 
+  kable()
+
+model_performance(log_mod_reduced) %>% 
+  kable()
 ```
 
 Our full and reduced model are very similar. The AIC and BIC values differ very little between the two, although they have decreased with the reduced model. We also see a slight increase in the RMSE which is not ideal but an increase that small isn't concerning. I do want to look at the Tjur's $R^2$ value which gives us a "typical" $R^2$ for regression. This number is technically called the Coefficient of Discrimination but can be interpreted like a standard $R^2$. So we explain about 1.3% of the variance in `customer_type` in our full model and only 0.6% with the reduced model, giving further evidence that our model is not great.
@@ -244,7 +272,7 @@ Our full and reduced model are very similar. The AIC and BIC values differ very 
 
 ## Assumptions
 
-```{r}
+```{r build-diagnostics}
 diagnostics <- plot(check_model(log_mod_reduced, panel = FALSE, type = "discrete_dots"))
 ```
 
@@ -277,11 +305,12 @@ We can check this by plotting each variable against the log odds. I am going to 
 
 We might also want to check on our errors.
 
-```{r}
-diagnostics[[5]]
+```{r linearity, fig.alt = ""}
+diagnostics[[5]] +
+  my_theme
 ```
 
-We definitely don't meet this condition as our points do not lie along the reference line.
+We definitely don't meet this condition as our points do not lie along the reference line. We should automatically question the validity of our results.
 
 ### All Combinations of Variables are Accounted For
 
@@ -291,11 +320,7 @@ This is met. We have actually already verified this by looking at tables and cou
 
 As we saw throughout this guide, using logistic regression to predict a customer's member status did not turn out as well as we thought. Our error rate was just about as good as guessing randomly (50/50 chance). That being said, I do think we gained some valuable insight into customer tendencies, even if we are not able to accurately predict member status. We were able to look at some of the product classes that members are more likely to purchase and found that members were more likely to make purchases using a credit card. It is also worth noting the the range of transaction rating is roughly the same regardless of whether someone is a member or not. This could be useful to the company as it allows them to focus on improving the quality of all transactions without the need to worry about if someone is a member or not. All in all, it is important to remember that logistic regression is best used when the response variable is binary (or has two levels) with predictor variables that can be either continuous or categorical.
 
+# References
 
-
-https://sscc.wisc.edu/sscc/pubs/RegDiag-R/logistic-regression.html
-ISLR
-Bradford's activity
-https://stackoverflow.com/questions/69074437/verify-model-assumptions-with-tidymodels
-performance docs
+<div id = "refs"></div>
 

@@ -1,8 +1,13 @@
 ---
-title: "Generalized Linear Models: Poisson Regression"
+title: "Generalized Linear Models with Poisson Regression"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
+nocite: |
+  @islr, @sta_github, @poisson_howto, @poi_pennstate, @poi_dataquest, @poi_book
 ---
 
 # Welcome
@@ -15,14 +20,14 @@ The code below imports our packages and the data we cleaned in the previous guid
 
 I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
 
-```{r load-items}
+```{r load-items, message = F}
 library(tidyverse)
 library(tidymodels)
 library(poissonreg)
-# library(lubridate)
-# library(GGally)
-# library(gvsu215)
-# library(car)
+library(GGally)
+library(performance)
+library(knitr)
+library(kableExtra)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -33,37 +38,47 @@ train <- training(retail_split)
 test <- testing(retail_split)
 ```
 
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
+```
+
 Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
 
 # Generalized Linear Models
 
-As you move forward in modeling, you may come across the term "generalized linear models". This concept refers to the wide variety of models we can create with, according to [Penn State University](https://online.stat.psu.edu/stat504/lesson/6/6.1), 
+As you move forward in modeling, you may come across the term "generalized linear models". This concept refers to the wide variety of models we can create with, according to [Penn State University](https://online.stat.psu.edu/stat504/lesson/6/6.1) [@poi_pennstate], 
 
 1. A random component (how the response variable is distributed)
 2. A systematic component (linear relationships between predictors and some form of the outcome)
-3. A link function (the link between 1 and 2)
+3. A link function (the connection between 1 and 2)
 
-All of the models we have covered so far are a specific case of a generalized linear model. SLR and MLR, where the response variable is continuous, are the simplest cases. The "link function" here is the expected value of the response and we assume the response variable comes from a normal distribution. We also have seen logistic regression and multinomial regression for when our response is categorical with two or more levels and where we assume the response comes from a binomial or multinomial distribution, respectively. These two use a link function of the log odds. This is why we have been predicting the log odds of an outcome rather than the outcome itself. 
+All of the models we have covered so far are a specific case of a generalized linear model. SLR and MLR, where the response variable is continuous, are the simplest cases. The "link function" here is the expected value (mean) of the response and we assume the response variable comes from a normal distribution. We also have seen logistic regression and multinomial regression for when our response is categorical with two or more levels and where we assume the response comes from a binomial or multinomial distribution, respectively. These two use a link function of the log odds. This is why we have been predicting the log odds of an outcome rather than the outcome itself. 
 
 Generalized linear models also use something called the maximum likelihood to calculate the estimates (as opposed to the least squares method traditionally used in SLR and MLR). Here, we are choosing values for the model that produce results that are the most likely to match the data we already have. There are many other kinds of generalized linear models. As long as we meet the three criteria above, we can create a model. What if we want to assume our response variable comes from a Poisson distribution? A negative binomial? A chi-squared? All we need to complete the model is a link function. To demonstrate another example of a generalized linear model, we will explore Poisson regression in this guide.
 
 # Poisson Regression
 
-As indicated above, we are interested in Poisson regression if we want to assume our response variable follows a Poisson distribution. ("Poisson" *should* be pronounced "pwah-soh" because it's French but most people pronounce it "poy-sahn".) A Poisson distribution is commonly used for variables that are counts as it predicts the probability that a certain event happens in period of time. In other words, we are counting something occurring and want to know how many will occur.
+As indicated above, we are interested in Poisson regression if we want to assume our response variable follows a Poisson distribution. ("Poisson" *should* be pronounced "pwah-soh" because it's a French name but most people pronounce it "poy-sahn".) A Poisson distribution is commonly used for variables that are counts as it predicts the probability that a certain event happens in period of time. In other words, we are counting something occurring and want to know how many will occur.
 
 The formula for Poisson regression is simpler than logistic and multinomial regression:
 
 $$
-\log{y} = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \ ...
+\log{\lambda} = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \ ...
 $$
-Instead of predicting the log odds of an occurence, we are predicting the log times some event occurs.
+Instead of predicting the log odds of an occurrence, we are predicting the log *average* times ($\lambda$) some event occurs. Yes, we are predicting the average number of an occurrence. This can make model interpretation a little tricky but we'll work through it below, once we get model output.
 
 ## Requirements
 
 The assumptions for Poisson regression are similar to logistic and multinomial regression.
 
 * The response variable must be a count variable with positive values. The predictors can be continuous or categorical.
-* Since we are assuming the respose variable comes from a Poisson distribution, we are assuming the mean and variance of the response variable are the same.
+* Since we are assuming the response variable comes from a Poisson distribution, we are assuming the mean and variance of the response variable are the same.
 * The predictor variables must have a linear relationship with the log of the response variable.
 * The specific observations should be independent.
 * Ideally, the predictor variables should not be highly correlated.
@@ -83,7 +98,7 @@ As for the predictors, I once again am going to collect all the variables I thin
 
 I also am going to create a new variable that we used in the previous guide: `time_of_day` which will take on the values of either "midday", "afternoon", or "evening".
 
-```{r}
+```{r subset-vars}
 train_subset <- train %>% 
   mutate(hour = hour(time),
          time_of_day = case_when(hour %in% c(10, 11, 12, 13, 14) ~ "Midday",
@@ -103,7 +118,7 @@ test_subset <- test %>%
 
 It's usually a good idea to take a look at our variables and how they interact before we make a model. So let's do that now!
 
-```{r}
+```{r qty-store}
 train_subset %>%
   ggplot(aes(x = qty, fill = store)) +
   geom_bar() +
@@ -111,16 +126,17 @@ train_subset %>%
   labs(x = "Quantity Sold in One Transaction",
        y = "Count",
        title = "Distribution of Quantities Sold vs. Store Visited",
-       fill = "Store")
+       fill = "Store") +
+  my_theme
 ```
 
-This variable might not have much of an effect  on quantity sold. For the most part the quantity sold in each store is roughly proportional to the total amount of goods sold of that particular quantity. Some expcetions are
+This variable might not have much of an effect  on quantity sold. For the most part the quantity sold in each store is roughly proportional to the total amount of goods sold of that particular quantity. Some exceptions are
 
 * Less quantities of 5 and 6 in Store C
 * More quantities of 7 and 10 in Store C
 * More quantities of 5 in Store A
 
-```{r}
+```{r qty-cust}
 train_subset %>%
   ggplot(aes(x = qty, fill = customer_type)) +
   geom_bar() +
@@ -128,12 +144,13 @@ train_subset %>%
   labs(x = "Quantity Sold in One Transaction",
        y = "Count",
        title = "Distribution of Quantities Sold vs. Member Status",
-       fill = "Member Status")
+       fill = "Member Status") +
+  my_theme
 ```
 
 There doesn't appear to be a huge different between member status and quantities sold. It does seem like more members buy 10 of an item and more non members buy 8 or 9 of an item but these differences are not extraordinary.
 
-```{r}
+```{r qty-gender}
 train_subset %>%
   ggplot(aes(x = qty, fill = gender)) +
   geom_bar() +
@@ -141,12 +158,13 @@ train_subset %>%
   labs(x = "Quantity Sold in One Transaction",
        y = "Count",
        title = "Distribution of Quantities Sold by Gender",
-       fill = "Gender")
+       fill = "Gender") +
+  my_theme
 ```
 
 We could end up seeing an effect here. Just by looking, I see that more males buy 1, 4, and 7 quantities of goods and females buy 5, 6, 8, and 9 items at a time.
 
-```{r}
+```{r qty-class}
 train_subset %>%
   ggplot(aes(x = qty, fill = product_class)) +
   geom_bar() +
@@ -154,31 +172,35 @@ train_subset %>%
   labs(x = "Quantity Sold in One Transaction",
        y = "Count",
        title = "Distribution of Quantities Sold vs. Product Class",
-       fill = "Product Class")
+       fill = "Product Class") +
+  my_theme
 ```
 
 There is a lot going on here so it is hard to tell what role product class might end up playing in the model. However, I do notice that if someone is going to buy a fashion accessory, they seem to have a tendency to buy 1 or 2 of them. Conversely, if someone is going to buy a food or beverage, they have a higher tendency to buy 3 or 5 of them. However, none of these observations stand out as a solid pattern.
 
-```{r}
+```{r qty-pay-method}
 train_subset %>%
   ggplot(aes(x = qty, fill = pay_method)) +
   geom_bar() +
   scale_fill_brewer(palette = "Dark2") +
   labs(x = "Quantity Sold in One Transaction",
        y = "Count",
-       title = "Distribution of Quantities Sold vs. Payment Method")
+       title = "Distribution of Quantities Sold vs. Payment Method") +
+  my_theme
 ```
 
 Once again, I see a few things that may have an effect, but nothing that stands out. 
 
-```{r}
+```{r qty-price}
 train_subset %>%
-  ggplot(aes(x = unit_price, y = qty)) +
+  ggplot(aes(x = unit_price, fill = factor(qty))) +
   geom_boxplot() +
-  # scale_fill_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Paired") +
   labs(x = "Unit Price",
        y = "Quantity Sold",
-       title = "Distribution of Quantities Sold vs. Unit Price")
+       title = "Distribution of Quantities Sold vs. Unit Price",
+       fill = "Quantity") +
+  my_theme
 ```
 
 It looks like there won't be as much of an effect here as I was originally thinking. I thought that as unit price increased, it would be less likely that someone would buy more of that item. From this plot (and the plots above) it looks like this company sells a nice handful of 10 items at a time but there doesn't seem to be a pattern between the price of one item. The range of unit prices vary from about \$10 to \$100 regardless of the quantity of that item sold.
@@ -191,34 +213,149 @@ train_subset %>%
   labs(x = "Quantity Sold in One Transaction",
        y = "Count",
        title = "Distribution of Quantities Sold by Time Period",
-       fill = "Time of Day")
+       fill = "Time of Day") +
+  my_theme
 ```
 
 Overall, most goods are sold midday and the fewest in the evening. But we do see that quantities of 1, 3, and 10 are more likely to be sold in the afternoon.
 
+I'll also take a look at all of the variables together just for good measure.
+
+```{r pairs, message = F, fig.alt = "Plot matrix of all variables plotted against each other."}
+train_subset %>% 
+  ggpairs() +
+  my_theme
+```
+
+I don't see any need for interaction variables or variable transformations.
+
 ## Building the Model
 
-Let's try to build a model with all of the above variables. I do anticipate having to remove some variables due to a lack of use in predicting the number of good sold. I have a good idea of what these variables will be but I would like to see what the p-values look like to help guide my decision making.
+Let's try to build a model with all of the above variables. I do anticipate having to remove some variables due to a lack of use in predicting the number of goods sold. I have a good idea of what these variables will be but I would like to see what the p-values look like to help guide my decision making.
 
-```{r}
+```{r build-model}
 poi_spec <- poisson_reg()
 
 poi_mod_full <- poi_spec %>%
   fit(qty ~ store + customer_type + gender + product_class + pay_method + unit_price + time_of_day, data = train_subset) %>% 
   repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
-tidy(poi_mod_full) %>% 
-  print(n = Inf)
+tidy(poi_mod_full, exp = TRUE) %>% 
+  mutate(p.value = format.pval(p.value, digits = 2)) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
-Well these are certainly not the results I was expecting! Every single one of the p-values is significant. This is another great example of how p-values don't always determine the variables that we choose to include in the final model. Yes, all p-values are highly significant, but take a look at the `estimate` column. Most of the parameter estimates are super small. To take `unit_price` as an example, we would predict the log mean quantity sold to decrease by 0.000344 items for every $1 increase in unit price. In other words, PUT THE EXPONENTIATED INTERPRETATION HERE.
+Alright, here is our model response! Not all of our p-values are significant (as expected) but let's dig into why. The interpretation of this model can be a little strange. First, you may have noticed that I used `exp = TRUE` in the code. This will exponentiate our answers in the `estimate` column to help with interpretation. Remember we were predicting the *log mean number of goods sold*. Exponentiating the estimates allows us to interpret in terms of *mean number of goods sold*. However, the results here don't actually give us our expected change in pure numbers, it gives it in relative risk, or percent change where the baseline is 1. Should we predict a value of 1 for a parameter (such as what we have for `unit_price`), we would predict the mean number of goods sold to not change at all based on the price of one item, holding all other variables constant.
 
-Even though the term is significant, it doesn't play a huge role in predicting the quantity sold. This, to me, indicates evidence for removal.
+Here are some interpretations from our data. Holding all other variables constant,
+
+* We would predict the mean number of goods purchased by a customer who is a male to be $1 - 0.937 = 0.063*100 = 6.3$% lower than if the customer was a female.
+* * We would predict the mean number of goods purchased by a customer who is buying a food or beverage product to be $1 - 0.881 = 0.119*100 = 11.9$% lower than if the customer bought an electronic accessory (the baseline category).
+* We would predict the mean number of goods purchased by a customer in the evening to be 7% higher than if the customer bought goods in the morning.
+
+We can use this information, as well as the p-values, to derive a reduced model. I want to avoid the variables whose estimates are at 1 or very close as this means they have little effect on predicting our response. Looking at the output, I'd say we keep `gender`, `product_class`, and `time_of_day`. I will that it's interesting that `unit_price` doesn't seem to have a role here as I would expect the price of an item to have some say in how many of that item are purchased.
+
+```{r reduced-model}
+poi_mod_reduced <- poi_spec %>%
+  fit(qty ~ gender + product_class + time_of_day, data = train_subset) %>% 
+  repair_call(data = train_subset) # this is necessary because we are not using cross-validation
+
+tidy(poi_mod_reduced, exp = TRUE) %>% 
+  mutate(p.value = format.pval(p.value, digits = 2)) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
+```
+
+I like this model better, but let's move forward with looking model performance before we make any final decisions.
+
+## Model Performance
+
+```{r performance}
+model_performance(poi_mod_full) %>% 
+  kable()
+
+model_performance(poi_mod_reduced) %>% 
+  kable()
+```
+
+There isn't much that differs between the two models. Following the pattern we've seen before, we have slightly reduced the AIC and the BIC and our $R^2$ and RMSE values have hardly increased. This is, to me, evidence to prefer the model with less variables as we can get almost the same performance as the full model.
+
+## Checking Assumptions
+
+```{r build-diagnostics, fig.alt = "Leverage plot. No leverage value exceeds 0.02 and all fall bewteen the contour lines of 0.5 and -0.5."}
+diagnostics <- plot(check_model(poi_mod_reduced, panel = FALSE, type = "discrete_dots"))
+diagnostics[[4]] +
+  my_theme
+```
+
+The good news is that we don't seem to have any influential observations or high leverage points.
+
+### The Response Variable
+
+Our response is in fact a count variable. All values of the variable are positive integers. We also use valid predictors as they are all either continuous or categorical.
+
+If our response variable `qty` truly has a population Poisson distribution, we should expect to see the mean and the variance be the same. This may not be exactly true for our sample since we have a sample and not the entire population but we would expect them to be close.
+
+```{r mean-var-qty}
+mean(train_subset$qty) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
+
+var(train_subset$qty) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
+```
+
+Without running any statistical tests (such as a dispersion test or goodness of fit test), it does look like the variance and mean are different. I can't say for certain, but we may be missing this assumption.
+
+### Linearity Between Log Response and Predictors
+
+Since we assume a linear relationship between the predictors and the log of the response variable, we should make sure we see linearity there.
+
+```{r pairs-log-qty, message = F}
+train_subset %>% 
+  mutate(log_qty = log(qty)) %>% 
+  select(-qty) %>% 
+  ggpairs() +
+  my_theme
+```
+
+First, we see that the response variable has a wonky distribution which is skewing the rest of the variables left. But I don't see evidence for any non-linear relationships here, except for perhaps with unit_price.
+
+### Independence
+
+We would like to see our observations be independent. We might also violate this assumption since we cannot confirm that a customer isn't in the dataset multiple times. It may also be that the items one customer purchases have some dependency on what the previous customer purchased (for instance, if I see someone buy strawberry yogurt and I decide I want that as well).
+
+### Correlation Between Predictors
+
+We ideally don't want to see our predictors be correlated. We can use a diagnostic plot to look at this.
+
+```{r correlation, fig.alt = "No VIF values are higher than 2."}
+diagnostics[[5]] +
+  my_theme
+```
+
+Our VIFs are very low so I see no reason for concern here.
+
+# Wrap Up
+
+Poisson regression can be a very useful tool if you are looking to predict counts of something or if you want to predict how often an event occurs in a specific time frame. This kind of problem doesn't arise frequently but it is useful to know that it exists. Of course, you could use another form of generalized linear model if you have reason to suspect that your response variable follows a different distribution. As we saw, the main drawback to using Poisson regression is the interpretation as we have to remember we are predicting a relative risk rather than an actual count.
+
+This guide wraps up all of the modeling that the series will cover. We will go over bootstrapping next which is a form of resampling and which uses a model but is not a model in and of itself. I feel like it might be helpful to create a little summary of the models we have covered here and when to use them.
+
+| **Model Name** | **Type of Response** | **Type of Predictors** | **Number of Predictors** |
+|:---:|:---:|:---:|:---:|
+| Simple Linear Regression | Continuous | Continuous | 1 |
+| Multiple Linear Regression | Continuous | Continuous, Categorical | 2+ |
+| Simple Logistic Regression | Binary | Continuous | 1 |
+| Multiple Logistic Regression | Binary | Continuous, Categorical | 2+ |
+| Multinomial Regression | Categorical w/ 3+ Levels | Continuous, Categorical | 2+ |
+| Poisson Regression | Discrete Count | Continuous, Categorical | 2+ |
+| Generalized Linear Model | Follows a Distribution | Continuous, Categorical | 2+ |
 
 
-https://www.statisticshowto.com/poisson-regression/
-https://online.stat.psu.edu/stat504/lesson/6/6.1
-ISLR
-https://www.dataquest.io/blog/tutorial-poisson-regression-in-r/
+# References
 
+<div id = "refs"></div>
 

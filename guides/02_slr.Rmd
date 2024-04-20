@@ -1,8 +1,13 @@
 ---
 title: "Simple Linear Regression"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
+nocite: |
+  @dataset, @islr, @sta_github
 ---
 
 # Welcome
@@ -11,17 +16,19 @@ Hey there! This is the second guide in my Modeling Guide with R series. In the p
 
 This page will focus on both simple and multiple linear regression. Although, I cannot cover all of the details and fine use cases of linear regression, we will explore some of the key ideas to focus on when creating and analyzing a linear regression model. We'll start by importing our data and identifying variables to use in the model then move to creating, interpreting, and testing the model. In both simple and linear regression, we'll use train/test validation and we'll also look at several candidate models.
 
-We will be using the same dataset for both the simple and multiple regression cases so let's get that set up first. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation and `GGally` to make a scatterplot matrix.
+We will be using the same dataset for both the simple and multiple regression cases so let's get that set up first. As mentioned in the previous, guide, I prefer to use the `tidyverse` family of packages. We'll also be using the `tidymodels` collection of packages to set up the models and perform our train/test validation and `GGally` to make a scatterplot matrix. The `performance` package helps us check the model after we've created it and the others are helpful for rendering good tables.
 
 The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
 
 I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
 
-```{r load-items}
+```{r load-items, message = F}
 library(tidyverse)
 library(tidymodels)
 library(GGally)
 library(performance)
+library(knitr)
+library(kableExtra)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -30,6 +37,16 @@ retail_split <- initial_split(retail, prop = .8, strata = store)
 
 train <- training(retail_split)
 test <- testing(retail_split)
+```
+
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
 ```
 
 Alright! Now that we have that set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
@@ -47,7 +64,7 @@ which states that we can represent the relationship between our predictor variab
 $$
 \hat{y} = \hat{\beta_0} + \hat{\beta_1} x_1 
 $$
-There is a different here. First, we've lost the error term since we are now in prediction mode (there is no error since we know the data we collected). You also now see hats above a few of the values. This indicates that they are estimates of the true values.
+There is a difference here. First, we've lost the error term since we are now in prediction mode (there is no error since we know the data we collected). You also now see hats above a few of the values. This indicates that they are estimates of the true values.
 
 ## Requirements
 
@@ -88,22 +105,31 @@ In each case, we are trying to find the values for $\hat{\beta_0}$ and $\hat{\be
 Let's build the model! We will use the `tidymodels` family of packages for this. We first set up the regression engine, then fit the models with our data. Based on the work done in the first guide, we saw that `total` has some right skew to it due to some outliers to the right. As a result, we are going to take the log of `total`.
 
 ```{r model}
+train_subset <- train %>% 
+  select(rating, unit_price, total) %>% 
+  mutate(log_total = log(total))
+
 lm_spec <- linear_reg() %>%
   set_mode("regression") %>%
   set_engine("lm")
 
 slr_mod_price <- lm_spec %>% 
-  fit(rating ~ unit_price, data = train)
+  fit(rating ~ unit_price, data = train_subset)
 
 slr_mod_total <- lm_spec %>% 
-  fit(rating ~ log(total), data = train)
+  fit(rating ~ log_total, data = train_subset)
 ```
 
 Above, I fit two different models, one with `unit_price` and one with `total`. Let's take a look at the output for both of them.
 
 ```{r slr-output}
-tidy(slr_mod_price)
-tidy(slr_mod_total)
+tidy(slr_mod_price) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
+
+tidy(slr_mod_total) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
 We can use this output to create a regression line equation using the above formulas:
@@ -113,27 +139,32 @@ $$
 $$
 
 $$
-\widehat{\text{rating}} = 7.06 - 0.0177 * \log{\text{(total)}}
+\widehat{\text{rating}} = 6.92 + 0.0177 * \log{\text{(total)}}
 $$
 In other words, because the slopes for both of the lines are very small, we have very little evidence of a linear relationship between `rating` and both `unit_price` and the log of `total`.
 
 
-## Assessing the Model
+# Assessing the Model
 
 Let's see how the models perform! My guess is not very well based on the information so far.
 
-```{r r2}
-model_performance(slr_mod_price)
-model_performance(slr_mod_total)
+```{r performance}
+model_performance(slr_mod_price) %>% 
+  kable()
+
+model_performance(slr_mod_total) %>% 
+  kable()
 ```
 
-We can get a good idea of this by looking at $R^2$, or the proportion of the variance in `rating` we have explained. When we use `unit_price`, we can explain 0.00711% of the variance in `rating` and with the log of `total`, 0.0088%. Not so good! There is very little difference between the two models. The AIC, or Akaike's informaiton criteria assess our error. We want to see it decrease as we look at different models. The same goes for the BIC, or Bayesian information criterion. We also want to see $R^2$ increase. 
+We can get a good idea of this by looking at $R^2$, or the proportion of the variance in `rating` we have explained. When we use both `unit_price` and `total`, we can explain less than 1% of the variance in `rating`. Not so good! There is very little difference between the two models. The AIC, or Akaike's information criteria assess our error. We want to see it decrease as we look at different models. The same goes for the BIC, or Bayesian information criterion. We also want to see $R^2$ increase. 
 
 Due to the similar models, I will be finishing the SLR section with only one model: the one with `log(total)` which does seem to be the slightly "better" model here.
 
+## Assumptions
+
 The `performance` packages offers us a nice glance at some plots to help answer if we have met the assumptions.
 
-```{r}
+```{r diagnostics, message = F}
 diagnostics <- plot(check_model(slr_mod_total, panel = FALSE))
 ```
 
@@ -141,43 +172,53 @@ diagnostics <- plot(check_model(slr_mod_total, panel = FALSE))
 
 First, can we assume linearity between the response and the predictor?
 
-```{r}
-diagnostics[[2]]
+```{r linearity, fig.alt = "Dot plot of predicted values vs. errors. Most points lie towards the higher end of the plot and are sparser towards the lower end. Predicted values range from 6.96 to 7.05 and errors from -3 to 3."}
+diagnostics[[2]] +
+  my_theme
 ```
 
 Well, this is a great example of how most real life data is not going to be perfectly linear. This data certainly shows no linear pattern; in fact, this looks more like a random scatter with no pattern than anything else. It's close, but I wouldn't say that we have satisfied this condition. We can see as well that the reference line in the plot is not flat for lower fitted values.
 
 ```{r correlation}
 cor(train$rating, log(train$total)) %>% 
-  round(5)
+  round(5) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
 ```
 
-We can also see that the correlation between the two variables is very close to zero indicating that there is low evidence of a strong relationship between `rating` and `total`.
+We can also see that the correlation between the two variables is very close to zero indicating that there is low evidence of a strong relationship between `rating` and the log of `total`.
 
 
 ### Constant Variability of Errors
 
-```{r}
-diagnostics[[3]]
+```{r heteroscedasticity, fig.alt = "Plot of predicted values vs. square root of standardized residuals. Most values of predicted values have a residual range of 0 to 1.2 but lower predicted values have a slightly lesser variance."}
+diagnostics[[3]] +
+  my_theme
 ```
 
 
-Using the third plot, do we see any curvature of the reference line? Are the errors more spread out (vertically) at some points than others? I do not see evidence to assume this. At nearly every fitted value, the residuals span from about -2.5 to 2.5 and the line is very close to flat.
+Using the third plot, do we see any curvature of the reference line? Are the errors more spread out (vertically) at some points than others? I do not see evidence to assume this other than perhaps towards the lower end of the fitted values. At nearly every fitted value, the residuals span from about -2.5 to 2.5 and the line is very close to flat.
 
 ### Normal Errors
 
 We can make a histogram of the errors to check for the normality assumption.
 
-```{r}
+```{r normal-errors}
+train_aug <- augment(slr_mod_total, new_data = train_subset)
+
 ggplot(data = train_aug, aes(x = .resid)) +
   geom_histogram(binwidth = 0.25, fill = "#099392", color = "black") +
-  xlab("Residuals")
+  xlab("Residuals") +
+  ylab("Count") +
+  labs(title = "Residual Histogram") +
+  my_theme
 ```
 
 At first glance, this looks ok! It's not perfect by any means but there are some peaks in the middle and lower tails. However, a histogram is not the best tool to measure this as we are mostly eye-balling it. 
 
-```{r}
-diagnostics[[5]]
+```{r qq-plot, fig.alt = "Sample points should lie flat along the horizontal line at 0. Points are above the line on the left and below the line on the right, making an S shape."}
+diagnostics[[5]] +
+  my_theme
 ```
 
 Let's use this plot, which is very similar to a traditional Q-Q plot, which plots our errors versus what we would expect for a perfectly normal distribution of errors. If our errors are close to normally distributed, we would want them to lie flat along the line and here we see some pretty wonky tails. I would not consider this assumption to be met.
@@ -186,8 +227,9 @@ Let's use this plot, which is very similar to a traditional Q-Q plot, which plot
 
 It's also a good idea to look at any extreme observations. It is possible that one or a few observations are driving the analysis and are skewing our results. 
 
-```{r}
-diagnostics[[4]]
+```{r leverage, fig.alt = "Leverage plot. All points are between the contour lines which are around 7 and -7 for the y-axis: studentized residuals. No leverage exceeds 0.02."}
+diagnostics[[4]] + 
+  my_theme
 ```
 
 We can look at the plot above to find observations with high leverage, or significantly different $x$ values (`log_total` values). I do not see any points outside of the dashed lines so we are ok here. The plot uses Cook's $d$, or Cook's distance, to quantify how influential a point is and we want to keep all values inside of the cutoff values for Cook's $d$ (the dashed lines).
@@ -197,25 +239,34 @@ We can look at the plot above to find observations with high leverage, or signif
 We can run the model on the testing dataset we created earlier to see how accurate the model is.
 
 ```{r pred-test}
-test_aug <- augment(slr_mod_total, new_data = test)
-head(test_aug)
+test_subset <- test %>% 
+  mutate(log_total = log(total)) %>% 
+  select(rating, log_total)
+
+test_aug <- augment(slr_mod_total, new_data = test_subset)
+head(test_aug) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
 ```
 
 This has created two new columns to our dataset: `.pred` and `.resid`. Now we have our predictions and errors! 
 
-```{r}
-mean(test_aug$.resid)
+```{r average-error}
+mean(test_aug$.resid) %>% 
+  kable() %>% 
+  kable_styling(full_width = FALSE)
 ```
 
 It looks like, on average, we over-predict `rating` by about 0.225 points. We can also plot our actual data versus the predicted data.
 
-```{r total-rating}
+```{r total-rating, fig.alt = "Plot of predicted vs. actual rating. Points are scattered about. Predicted ranges from 6.9 to 7.05 and actual ranges from 4 to 10."}
 test_aug %>% 
   ggplot(aes(x = .pred, y = rating)) +
   geom_point() +
   labs(title = "Predicted Rating vs. Actual Rating",
        x = "Predicted Rating",
-       y = "Actual Rating")
+       y = "Actual Rating") +
+  my_theme
 ```
 
 We didn't do very good. Notice how the predicted rating only ranges from about 6.97 to 7.06 whereas the actual rating ranges from 4 to 10. This is produces some of our huge error terms and leads to a poor model and failed model assumptions.
@@ -223,3 +274,7 @@ We didn't do very good. Notice how the predicted rating only ranges from about 6
 ## Wrap Up
 
 All in all, simple linear regression was not a good model to choose for predicting `rating`. With only one variable, we don't get a lot of information to help us predict `rating` accurately. Moreover, we can't be certain that we meet the linearity assumption so our results might be in question. My original prediction was not correct as both `unit_price` and `total` alone do not tell us much about `rating`.
+
+# References
+
+<div id="refs"></div>

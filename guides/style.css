@@ -1,0 +1,66 @@
+body {
+  background: #b0b0b0;
+  color: black;
+  font-family: Georgia, Garamond, 'Times New Roman', Times, serif;
+  font-size: 18px;
+}
+
+#header {
+  text-align: center;
+}
+
+a {
+  color: #5e0053;
+}
+
+a:hover {
+  color: #097563;
+}
+
+code {
+  background-color: #00000026;
+}
+
+h1 {
+  text-align: center;
+}
+
+h2 {
+  text-align: center;
+}
+
+h3 {
+  text-align: center;
+}
+
+.r {
+  background-color: #e3e3e3;
+}
+
+tbody tr:nth-child(odd){
+  background-color: #e3e3e3;
+}
+
+tbody tr:nth-child(even){
+  background-color: #d8d8d8;
+}
+
+thead {
+  background-color: #d8d8d8;
+}
+
+th {
+  text-align: center;
+}
+
+.section pre {
+  background-color: #e3e3e3;
+}
+
+.hljs {
+  background-color: #e3e3e3;
+}
+
+blockquote {
+  border-left: 5px solid #e3e3e3;
+}

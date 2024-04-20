@@ -1,8 +1,13 @@
 ---
 title: "Logistic and Multinomial Regression"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
+nocite: |
+  @islr, @sta_github, @performance, @multi_reg_book
 ---
 
 # Welcome
@@ -15,7 +20,7 @@ The code below imports our packages and the data we cleaned in the previous guid
 
 I will be setting the seed for the random generator so we can get the same results each time I start a new R session and split the data. You may or may not wish to do this in your work. I want to make sure we get a roughly equal amount of each store in the split sets so I will take a stratified sample to make the split (`strata = store`).
 
-```{r load-items}
+```{r load-items, message = F}
 library(tidyverse)
 library(tidymodels)
 library(lubridate)
@@ -23,6 +28,8 @@ library(performance)
 library(GGally)
 library(gvsu215)
 library(car)
+library(knitr)
+library(kableExtra)
 
 retail <- read_csv(here::here("data/retail_clean.csv"))
 
@@ -31,6 +38,16 @@ retail_split <- initial_split(retail, prop = .8, strata = store)
 
 train <- training(retail_split)
 test <- testing(retail_split)
+```
+
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
 ```
 
 Alright! Now that we have that all set, we'll use the `train` data for all the model creation and will only use the `test` data when we are analyzing our models.
@@ -67,7 +84,7 @@ I would like to start with:
 
 This time, I also want to create a new variable `hour` that describes the hour of the day a customer visited a store. The following code creates a subset of the data (and also codes our response variable as a factor).
 
-```{r}
+```{r subset-vars}
 train_subset <- train %>% 
   mutate(store = factor(store),
          qty = factor(qty),
@@ -110,7 +127,7 @@ This should look pretty familiar. We had a similar situation with logistic regre
 
 Before officially building the model, let's make a few plots to visualize our variables.
 
-```{r}
+```{r store-member}
 train_subset %>% 
   ggplot(aes(x = store, fill = customer_type)) +
   geom_bar() +
@@ -118,12 +135,13 @@ train_subset %>%
   labs(title = "Visits to Stores by Member Status",
        x = "Store",
        y = "Count",
-       fill = "Member Status")
+       fill = "Member Status") +
+  my_theme
 ```
 
 It looks like we have very similar results per store here. Store A seems to attract more non-members but this may be because it has more customers overall. We may not see an effect here later on in the model.
 
-```{r}
+```{r store-gender}
 train_subset %>% 
   ggplot(aes(x = store, fill = gender)) +
   geom_bar() +
@@ -131,12 +149,13 @@ train_subset %>%
   labs(title = "Visits to Stores by Gender",
        x = "Store",
        y = "Count",
-       fill = "Gender")
+       fill = "Gender") +
+  my_theme
 ```
 
 Similar to the above plot, we see more males visiting store A but, again, this could be due to the fact that more customers visit store A (although not by much).
 
-```{r}
+```{r store-class}
 train_subset %>% 
   ggplot(aes(x = store, fill = product_class)) +
   geom_bar() +
@@ -144,26 +163,28 @@ train_subset %>%
   labs(title = "Store vs. Product Class",
        x = "Store",
        y = "Count",
-       fill = "Product Class")
+       fill = "Product Class") +
+  my_theme
 ```
 
 We may end up seeing some sort of effect in the model with this variable. I'm just eyeballing the plot here but it looks like Store A sells more Home/Lifestyle and Electronic goods and less Fashion Accessories while Store B sells more Sports/Travel items and Store C sells more Food/Beverages.
 
-```{r}
+```{r store-qty}
 train_subset %>% 
   ggplot(aes(x = store, fill = qty)) +
   geom_bar() +
   scale_fill_brewer(palette = "Set3") +
   labs(title = "Store Location vs. Quantity Sold",
-       subtitle = "One Item, One Transaction",
+       subtitle = "One Unique Item Per Transaction",
        x = "Store",
        y = "Count",
-       fill = "Quantity")
+       fill = "Quantity") +
+  my_theme
 ```
 
 It is hard to tell if there is a pattern here. I do see that Store A has more products sold in the middle areas (4, 5, 6, 7) while Store B is more even across the board and Store C has more on the higher end. However this is just a generality and I'm not sure if we will keep this variable.
 
-```{r}
+```{r store-total}
 train_subset %>% 
   ggplot(aes(x = total, fill = store)) +
   geom_boxplot() +
@@ -173,12 +194,13 @@ train_subset %>%
        y = "Store",
        fill = "Store") +
   theme(axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
+        axis.ticks.y = element_blank()) +
+  my_theme
 ```
 
 Totals seem to be very similar across stores and skewed right with the higher totals being less common than lower totals. Store C does seem to have higher purchase totals but this may be because of a few higher values rather than an general tendency.
 
-```{r}
+```{r store-pay-method}
 train_subset %>% 
   ggplot(aes(x = store, fill = pay_method)) +
   geom_bar() +
@@ -186,12 +208,13 @@ train_subset %>%
   labs(title = "Store vs. Pay Method",
        x = "Store",
        y = "Count",
-       fill = "Pay Method")
+       fill = "Pay Method") +
+  my_theme
 ```
 
 Once again, results are similar across stores; however, I do see that Store A has more customers paying with Ewallet, Store B more with credit cards, and Store C more with cash. We will see if this difference is large enough to pop up in our model, but this may be useful information regardless. 
 
-```{r}
+```{r store-rating}
 train_subset %>% 
   ggplot(aes(x = rating, fill = store)) +
   geom_boxplot() +
@@ -201,12 +224,13 @@ train_subset %>%
        y = "Store",
        fill = "Store") +
   theme(axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
+        axis.ticks.y = element_blank()) +
+  my_theme
 ```
 
 It looks like all stores have high and low ratings but, on average Store B is rated lower than the other two. It is unlikely that this will have a big effect in the model but I think this helps the company realize they should focus on increasing customer satisfaction at all stores, especially Store B.
 
-```{r}
+```{r store-hour}
 train_subset %>% 
   ggplot(aes(x = store, fill = hour)) +
   geom_bar() +
@@ -214,15 +238,17 @@ train_subset %>%
   labs(title = "Store vs. Hour Visited",
        x = "Store",
        y = "Count",
-       fill = "Hour")
+       fill = "Hour") +
+  my_theme
 ```
 
 It looks like all stores are open between the hours of 10am and 8pm. Store A attracts customers right at open and near the early afternoon but becomes less busy as the day goes on. Store B starts off pretty slow, gets a small rush early afternoon and finishes the day strong with the most customers arriving around 6 and 7 in the evening. Store C has roughly the same amount of traffic all day with small peaks at noon and 5pm. This information can be vital to the company to help them better prepare for rushes and make sure the shelves are stocked in preparation. 
 
 To wrap up, it's a good idea to look at all of the variables together (as we have done before) to look for any potential interaction terms or transformations (e.g., square root, log, square, cube, etc.).
 
-```{r}
-ggpairs(train_subset)
+```{r pairs, message = F}
+ggpairs(train_subset) +
+  my_theme
 ```
 
 We are using the `total` variable in this model so we will want to apply a transformation to it here, such as the square root. I'd also like to explore a potential interaction between product class and payment method.
@@ -231,7 +257,7 @@ We are using the `total` variable in this model so we will want to apply a trans
 
 Now that we have an understanding of what the multinomial model looks like, let's use R to build one!
 
-```{r model-full}
+```{r model-full, message = F}
 train_subset <- train_subset %>% 
   mutate(sqrt_total = sqrt(total))
 test_subset <- test_subset %>% 
@@ -245,9 +271,11 @@ multi_mod_full <- multi_spec %>%
   repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_full) %>% 
-  print(n = Inf)
+  kable() %>% 
+  kable_styling(c("striped", "responsive"), fixed_thead = TRUE)
 
-model_performance(multi_mod_full)
+model_performance(multi_mod_full) %>% 
+  kable()
 ```
 
 This gives us a huge output. Remember, we are really running two regression models at the same time, comparing Store B to Store A and Store C to Store A. So, for example, if you purchase a home/lifestyle good, we would predict your log odds of shopping at Store B to be 1.00 compared to Store A, holding all other variables constant.
@@ -282,9 +310,11 @@ multi_mod_reduced <- multi_spec %>%
   repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_reduced) %>% 
-  print(n = Inf)
+  kable() %>% 
+  kable_styling(c("striped", "responsive"), fixed_thead = TRUE)
 
-model_performance(multi_mod_reduced)
+model_performance(multi_mod_reduced) %>% 
+  kable()
 ```
 
 This still gives us a large model with many variables. Part of this is due to how many levels the `hour` variable and the interaction variable contains. I hesitate to remove `hour` since some of the hours seem to play a role in predicting the log odds of going to a certain store. Before moving forward with this model (which does seem to be a slight improvement from the full model as we have lowered the AIC and BIC), I would like to fit one more model without `hour` to see what happens.
@@ -295,9 +325,11 @@ multi_mod_nohour <- multi_spec %>%
   repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_nohour) %>% 
-  print(n = Inf)
+  kable() %>% 
+  kable_styling(c("striped", "responsive"), fixed_thead = TRUE)
 
-model_performance(multi_mod_nohour)
+model_performance(multi_mod_nohour) %>% 
+  kable()
 ```
 
 Well...I'm not upset about this one! We've lowered the AIC and BIC once again although our RMSE has increased only slightly. The $R^2$ has gone down but it wasn't very large at all to begin with. At this point, I'm not really sure which model is "better". It is very nice to remove `hour` and lose a large number of levels seen in the model. But there were a few levels of `hour` that seemed to play a role in the model and I hesitate just dropping it.
@@ -310,7 +342,7 @@ Let's see how we did!
 
 ### Reduced Model
 
-```{r}
+```{r accuracy-train}
 multi_aug <- augment(multi_mod_reduced, new_data = train_subset)
 
 ggplot(data = multi_aug, aes(x = .pred_class, y = store)) + 
@@ -319,14 +351,15 @@ ggplot(data = multi_aug, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "Reduced Model | Training Data")
+       subtitle = "Reduced Model | Training Data") +
+  my_theme
 ```
 
 Well, the reduced model didn't do terribly but also not the best. We want to see the most dots as possible along the diagonal from the bottom left to the top right. This would mean we predicted a customer would go to a certain store and they actually did. We do see that we correctly predicted a nice handful of observations. That being said, there are quite a few that we did not predict correctly. We have about 30-40 observations in all possible combinations of stores meaning that we made some wrong predictions in every way possible.
 
 Let's see it in table form.
 
-```{r}
+```{r accuracy-tbl, message = F}
 multi_aug %>% 
   rename("Predicted" = .pred_class,
          "Actual" = store) %>% 
@@ -347,7 +380,8 @@ ggplot(data = multi_aug_test, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "No Hour Model | Testing Data")
+       subtitle = "Reduced Model | Testing Data") +
+  my_theme
 
 multi_aug_test %>% 
   rename("Predicted" = .pred_class,
@@ -360,7 +394,7 @@ We see similar results. We have correctly predicted 79 out of the 201 observatio
 
 ### The "No Hour" Model
 
-```{r}
+```{r no-hour-acc}
 multi_aug_nohour <- augment(multi_mod_nohour, new_data = train_subset)
 
 ggplot(data = multi_aug_nohour, aes(x = .pred_class, y = store)) + 
@@ -369,12 +403,13 @@ ggplot(data = multi_aug_nohour, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "No Hour Model | Training Data")
+       subtitle = "No Hour Model | Training Data") +
+  my_theme
 ```
 
 Just looking at this plot, I don't see any striking evidence that we did any better or worse by taking `hour` out of the model. We still have plenty of observations where we incorrectly predict their `store` value.
 
-```{r}
+```{r no-hour-acc-tbl}
 multi_aug_nohour %>% 
   rename("Predicted" = .pred_class,
          "Actual" = store) %>% 
@@ -393,7 +428,8 @@ ggplot(data = multi_aug_test_nohour, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "No Hour Model | Testing Data")
+       subtitle = "No Hour Model | Testing Data") +
+  my_theme
 
 multi_aug_test_nohour %>% 
   rename("Predicted" = .pred_class,
@@ -409,7 +445,7 @@ With the testing data, we predict 74/201 correct for a score of 36.82%. Based on
 
 Even though our model is not performing as well as I'd hoped, it still is good to check our assumptions. It is possible that part of the reason why our model is not satisfactory is due to not meeting some assumptions.
 
-```{r}
+```{r build-diagnostics, message = F}
 diagnostics <- plot(check_model(multi_mod_reduced, panel = FALSE, residual_type = "normal"))
 ```
 
@@ -429,7 +465,7 @@ I think this violation plays a role in our models lack of major success. Because
 
 As before, let's look at variance inflation factors to look at multicollinearity.
 
-```{r}
+```{r collinearity}
 multi_mod_reduced %>% 
   extract_fit_engine() %>% 
   check_collinearity()
@@ -437,7 +473,7 @@ multi_mod_reduced %>%
 
 This is not good at all, but remember that we have an interaction term in our model so we do expect some correlation there. We should check VIFs without any interactions.
 
-```{r}
+```{r collinearity-no-int}
 multi_spec %>%
   fit(store ~ gender + product_class + pay_method + hour, data = train_subset) %>% 
   repair_call(data = train_subset) %>% 
@@ -449,7 +485,7 @@ We have evidence for low correlation between predictors. `gender`, `product_clas
 
 What strikes me more is the massive VIF for `hour`. At 18.33, it is clearly correlated with other predictors. At this point, it should be dropped or combined into another variable. I'm not sure we could get a better model with the data we have, but curiosity strikes me to test something. I am going to create a new variable that merges some of the `hour`s together and then I'll run a new model on that. I won't include the interaction for demonstration purposes.
 
-```{r}
+```{r time-of-day}
 train_subset <- train_subset %>% 
   mutate(time_of_day = case_when(hour %in% c(10, 11, 12, 13, 14) ~ "Midday",
                                  hour %in% c(15, 16, 17, 18) ~ "Afternoon",
@@ -460,7 +496,8 @@ multi_mod_reduced2 <- multi_spec %>%
   repair_call(data = train_subset) # this is necessary because we are not using cross-validation
 
 tidy(multi_mod_reduced2) %>% 
-  print(n = Inf)
+  kable() %>% 
+  kable_styling(c("striped", "responsive"), fixed_thead = TRUE)
 
 multi_aug2 <- augment(multi_mod_reduced2, new_data = train_subset)
 
@@ -470,7 +507,8 @@ ggplot(data = multi_aug2, aes(x = .pred_class, y = store)) +
   labs(x = "Predicted Store", 
        y = "Actual Store ", 
        title = "Store Visited: Predicted vs. Actual",
-       subtitle = "Training Data: Reduced Model 2")
+       subtitle = "Training Data: Reduced Model 2") +
+  my_theme
 
 multi_mod_reduced2 %>% 
   extract_fit_engine() %>% 
@@ -489,8 +527,9 @@ We may have clusters in the data depending on how the data was collected and on 
 
 ### Normal Errors
 
-```{r}
-diagnostics[[3]]
+```{r normal-errors}
+diagnostics[[3]] +
+  my_theme
 ```
 
 Ideally, we'd like to see our errors normally distributed as well. According to this Q-Q Plot, we do not meet this assumption which questions our model results further.
@@ -501,9 +540,8 @@ I think we are seeing a pattern over these guides of not quite being able to pre
 
 The moral of the story is don't fear when your results aren't significant or aren't what you'd hoped. Think about what you were able to gain from the process. A model that doesn't work well is still progress and can tell you a lot about your data. Why didn't the model work? What could you do to change the model or update the data? Every pattern, trend, failure, and success allows us to learn something and make changes and suggestions for the future.
 
+# References
 
-https://bookdown.org/sarahwerth2024/CategoricalBook/multinomial-logit-regression-r.html
-ISLR
-https://easystats.github.io/performance/reference/check_collinearity.html
+<div id = "refs"></div>
 
 
