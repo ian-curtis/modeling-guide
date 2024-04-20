@@ -1,13 +1,16 @@
 ---
 title: "Exploratory Data Analysis and Cleaning"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
 ---
 
 # Welcome
 
-Hey there! Welcome to my Modeling Guide with R. Over the course of the next few guides, you'll get to see a few modeling concepts in action. The dataset used here was [downloaded from Kaggle](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/data). It is unclear if this dataset was generated randomly or is based on real sales data; however, it has plenty of variables for us to explore.
+Hey there! Welcome to my Modeling Guide with R. Over the course of the next few guides, you'll get to see a few modeling concepts in action. The dataset used here was [downloaded from Kaggle](https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales/data) [@dataset]. It is unclear if this dataset was generated randomly or is based on real sales data; however, it has plenty of variables for us to explore.
 
 # This Guide
 
@@ -19,12 +22,28 @@ The guide you are reading dives into a generalized exploratory data analysis (ED
 
 Let's begin importing some packages and reading in the dataset. I rely heavily on the `tidyverse` family of packages and draw on other packages as needed. Here, we will be using the `lubridate` package to work with dates and times.
 
-```{r load-packages}
+```{r load-packages, message = F}
 library(tidyverse)
 library(lubridate)
+library(knitr)
+library(kableExtra)
 
-retail <- read_csv("data/retail_raw.csv")
-head(retail)
+retail <- read_csv(here::here("data/retail_raw.csv"))
+dim(retail)
+head(retail) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive")) %>% 
+  scroll_box(width = "100%", box_css = "border: 2px solid black; padding: 5px; ") 
+```
+
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
 ```
 
 
@@ -47,7 +66,7 @@ After looking at the summary, I think I want to take the time to rename the vari
   b. Calculates the subtotal of a purchase before tax by dividing the total of the purchase by 1.05 (5% tax)
   c. Calculates the unit price of an item by dividing the subtotal by the quantity.
 
-```{r prep-data}
+```{r rename-data}
 retail <- retail %>% 
   rename(id = `Invoice ID`,
          store = Branch,
@@ -65,7 +84,11 @@ retail <- retail %>%
          subtotal = total / 1.05,
          unit_price = subtotal / qty
          )
-head(retail)
+
+head(retail) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive")) %>% 
+  scroll_box(width = "100%", box_css = "border: 2px solid black; padding: 5px; ")
 ```
 
 # Basic Exploratory Data Analysis
@@ -80,7 +103,8 @@ retail %>% ggplot(aes(store, label = store)) +
   geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
   labs(x = "Store ID",
        y = "Count",
-       title = "Counts of Transactions by Store")
+       title = "Counts of Transactions by Store") +
+  my_theme
 ```
 
 * There are three stores and no missing values
@@ -94,7 +118,8 @@ retail %>% ggplot(aes(customer_type, label = customer_type)) +
   geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
   labs(x = "Customer Type",
        y = "Count",
-       title = "Counts of Each Customer Type")
+       title = "Counts of Each Customer Type") +
+  my_theme
 ```
 
 * There are two customer types and no missing values
@@ -108,7 +133,8 @@ retail %>% ggplot(aes(gender, label = gender)) +
   labs(x = "Gender",
        y = "Count",
        title = "Counts of Each Gender",
-       subtitle = "Represented by This Dataset")
+       subtitle = "Represented by This Dataset") +
+  my_theme
 ```
 
 * No information on how this variable was calculated. It is possible that it was self-reported but could have been derived programmatically Again, I'll note that it is not clear whether this dataset was randomly generated or is from the real world. There are also two genders represented here although more could be possible.
@@ -122,7 +148,8 @@ retail %>% ggplot(aes(product_class, label = product_class)) +
   labs(x = "Product Class",
        y = "Count",
        title = "Counts of Each Product Class") +
-  scale_x_discrete(guide = guide_axis(n.dodge = 2))
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  my_theme
 ```
 
 * There are six different product classes and no missing values
@@ -136,7 +163,8 @@ retail %>% ggplot(aes(qty)) +
   geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
   labs(x = "Number of Items",
        title = "Distribution of The Quantity of an Item Sold",
-       subtitle = "In a Single Transaction")
+       subtitle = "In a Single Transaction") +
+  my_theme
 ```
 
 * A histogram might be more applicable here; however there are only 10 values in the `qty` variable
@@ -150,7 +178,8 @@ retail %>% ggplot(aes(total)) +
   geom_histogram(fill = "#099392", color = "black", binwidth = 50) +
   labs(x = "Transaction Total",
        y = "Count",
-       title = "Distribution of Transaction Totals")
+       title = "Distribution of Transaction Totals") +
+  my_theme
 ```
 
 
@@ -166,7 +195,8 @@ retail %>% ggplot(aes(pay_method, label = pay_method)) +
   geom_text(aes(label = after_stat(count)), stat = "count", vjust = 2) +
   labs(x = "Payment Method",
        y = "Count",
-       title = "Counts of Each Payment Method")
+       title = "Counts of Each Payment Method") +
+  my_theme
 ```
 
 * There are three different payment methods and no missing values
@@ -178,7 +208,8 @@ retail %>% ggplot(aes(rating)) +
   labs(x = "Rating",
        y = "Count",
        title = "Distribution of Transaction Rating") +
-  scale_x_continuous(breaks = seq(0, 10, 1))
+  scale_x_continuous(breaks = seq(0, 10, 1)) +
+  my_theme
 ```
 
 
@@ -191,7 +222,8 @@ retail %>% ggplot(aes(unit_price)) +
   labs(x = "Price",
        y = "Count",
        title = "Distribution of Unit Price",
-       subtitle = "The Price of a Single Item")
+       subtitle = "The Price of a Single Item") +
+  my_theme
 ```
 
 
@@ -201,7 +233,7 @@ retail %>% ggplot(aes(unit_price)) +
 The last step here will be to export our edited dataset so we can import it into other guides later on.
 
 ```{r export}
-write_csv(retail, "data/retail_clean.csv")
+write_csv(retail, here::here("data/retail_clean.csv"))
 ```
 
 
@@ -210,5 +242,7 @@ write_csv(retail, "data/retail_clean.csv")
 That will concludes this preliminary guide on preparing our data! Over the course of the next guides, we will explore the data a little bit more and create some predictive models.
 
 
+# References
 
+<div id="refs"></div>
 

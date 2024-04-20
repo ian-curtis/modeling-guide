@@ -1,8 +1,13 @@
 ---
 title: "Bootstrapping"
 author: "Ian Curtis"
-date: "2024-03-12"
-output: html_document
+date: "April 2024"
+output: 
+  html_document:
+    css: style.css
+bibliography: bibliography.bib
+nocite: |
+  @sta_github, @bootstrapping
 ---
 
 # Welcome
@@ -11,21 +16,32 @@ Hey there! This is the seventh guide in my Introduction to Modeling with R serie
 
 The code below imports our packages and the data we cleaned in the previous guide. It also splits the data into a train and test set. We will train our models using the training set and will test its performance using the test set. We do this to simulate how the model will perform in the "real world".
 
-```{r load-items}
+```{r load-items, message = F}
 library(tidyverse)
 library(tidymodels)
 library(GGally)
 library(rsample)
-library(lubridate)
+library(knitr)
+library(kableExtra)
 
 retail <- read_csv(here::here("data/retail_clean.csv")) %>% 
   mutate(hour = hour(time)) %>% 
   select(-c(id, date, time))
 ```
 
+```{r echo = FALSE}
+knitr::opts_chunk$set(fig.align = "center")
+
+my_theme <- theme(plot.background = element_rect(fill = "#e3e3e3", color = "black", linewidth = 2),
+        panel.background = element_rect(fill = "#e3e3e3"),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(fill = "#e3e3e3"))
+```
+
 # Bootstrapping
 
-What exactly is bootstrapping? In simple terms, it's another way to do a hypothesis test. Bootstrapping uses the data that you have already collected to create many, many samples, as if you had sampled your population many, many times to get many, many datasets. Remember, the purpose of modeling (and by extension, hypothesis tests) is to use a subset of a population to predict something about that population. We want to be able to use a sample to make educated guesses about features of a population. In our case, we want to use a subset of customers from a set of stores from a company to make predictions about how all customers from the all stores (in the company) shop.
+What exactly is bootstrapping? In simple terms, it's a way to study the population values of your model without doing a formal hypothesis test. Bootstrapping uses the data that you have already collected to create many, many samples, as if you had sampled your population many, many times to get many, many datasets. Remember, the purpose of modeling (and by extension, hypothesis tests) is to use a subset of a population to predict something about that population. We want to be able to use a sample to make educated guesses about features of a population. In our case, we want to use a subset of customers from a set of stores from a company to make predictions about how all customers from the all stores (in the company) shop.
 
 In "traditional" statistics we can attempt to model the data using equations. We have seen some of these models earlier (SLR, MLR, logistic regression, etc.) and there are other options as well depending on what you are predicting and what your data looks like. Instead of using one model on one sample dataset, bootstrapping uses resampling to create many models on many sample datasets and summarizing the results. How does it do this? Well, it takes the original dataset and creates many samples from it. 
 
@@ -33,25 +49,27 @@ Think about the primary dataset as a pool of possible values for bootstrapping t
 
 For example, in our pool there are 
 
-```{r}
+```{r counts-by-store}
 retail %>% 
   select(store) %>% 
   group_by(store) %>% 
-  count()
+  count() %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"), full_width = FALSE)
 ```
 
 340 "A"s, 332 "B"s, and 328 "C"s to choose from.
 
 Let's suppose we were manually doing bootstrapping and creating a new dataset ourselves. How would we do it? Well, let's make one observation at a time. Our first observation's first variable is `store`. To pick this observation's `store` value, we will randomly select a `store` value from the pool. Each value in the pool has an equal chance of being selected.
 
-```{r}
+```{r random-store}
 set.seed(2024)
 sample(retail$store, 1)
 ```
 
 Alright, that is the value for our first observation's `store`. Next we'll grab a value for `customer_type`.
 
-```{r}
+```{r random-member}
 sample(retail$customer_type, 1)
 ```
 
@@ -61,7 +79,7 @@ We'll continue this process for each variable. Then we'll do it again for the se
 
 Once we have one dataset, we'll do it again. And again. And again. Bootstrapping is powerful in that it does this dataset creation process for us and it can do it very quickly. We can create as many resampled datasets as we want but typically you will see the number of these datasets get into the thousands.
 
-Once we have a collection of datasets, we will create a model for each of them. Essentially, we will pick a model (e.g., MLR, multinomial regression, etc.) and use that same model on each of the thousands of datasets. Then we look at the results of all of the models and see the variety of results that we get. We can then see how common certain results are and create a confidence interval for our model results. We can then use this confidence interval to see the likely values for a model of the true popuplation values.
+Once we have a collection of datasets, we will create a model for each of them. Essentially, we will pick a model (e.g., MLR, multinomial regression, etc.) and use that same model on each of the thousands of datasets. Then we look at the results of all of the models and see the variety of results that we get. We can then see how common certain results are and create a confidence interval for our model results. We can then use this confidence interval to see the likely values for a model of the true population values.
 
 This was a long explanation with a lot of words. Let's use bootstrapping on our dataset to see how it works.
 
@@ -69,21 +87,129 @@ This was a long explanation with a lot of words. Let's use bootstrapping on our 
 
 It's always a good idea to look at our variables first to get an idea of how they related to one another. We've done this a bit in previous guides, but let's get in the habit of doing it.
 
-```{r}
+```{r var-pairs, message = F, fig.alt = "Plot matrix of all pairs of varibles."}
 retail %>% 
-  ggpairs()
+  ggpairs() +
+  my_theme
 ```
 
-This makes a very large plot but gives us a good idea of how our data interacts. We can also see the distributions of all of the variables. For more insights about this plot, see the first guide which goes over generalities regarding the data such as skewness and interactions.
+This makes a very large plot with hard-to-read axes but gives us a general idea of how our data interacts. We can also see the distributions of all of the variables. For more insights about this plot, see the first guide which goes over generalities regarding the data such as skewness and interactions.
 
 ## Model and Variable Selection
 
-Before actually starting to bootstrap, we have to pick a response variable and a corresponding model. Let's revisit the model we made when covering logistic regression. There, we were trying to predict whether a certain customer was a member or not. Our model wasn't very good at predicting member status but what if that was because our dataset wasn't very good? Let's try to use bootstrapping and generate many datasets and see what our results are.
+Before actually starting to bootstrap, we have to pick a response variable and a corresponding model. Let's revisit the model we made when covering multiple linear regression. There, we were trying to predict the rating a customer would give a transaction in an effort to determine what aspects of the transaction lead to negative vs. positive ratings. Our model wasn't very good at predicting rating but what if that was because our specific dataset wasn't very good? Let's try to use bootstrapping and generate many datasets and see what our results are. First, we set up the model (we'll use the reduced model we used in the MLR guide).
+
+```{r subset-model}
+retail_subset <- retail %>% 
+  mutate(log_total = log(total)) %>% 
+  select(rating, store, gender, log_total, unit_price)
+
+lm_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+mlr_mod_reduced <- lm_spec %>% 
+  fit(rating ~ store + gender + log_total + unit_price + store*gender + log_total*unit_price, data = retail_subset)
+
+tidy(mlr_mod_reduced) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
+```
+
+Now, we can create our many resampled datasets. The code below takes 2000 random samples (with replacement) from our original dataset to create 2000 new datasets of size 1000 x 5.
+
+```{r generate-boots}
+set.seed(2024)
+
+# Generate the 2000 bootstrap samples
+boot_samps <- retail_subset %>% 
+  bootstraps(times = 2000)
+```
+
+This actually creates two datasets for each iteration. One is an assessment dataset and another is the analysis dataset. We will only be working with the analysis datasets here. We can view the first analysis dataset to see what it looks like.
+
+```{r}
+boot_samps$splits[[1]] %>% 
+  analysis() %>% 
+  head() %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
+```
+
+R has randomly selected values for each row. The pool of possible values it could select from was contained in the original dataset. This dataset is one of 2000 datasets created using our original dataset and represents a possible dataset we could have collected from the real world.
+
+Ok, so now we have a ton of datasets. The next step is to apply our linear model onto each of those 2000 datasets. This will give us separate parameter estimates and performance metrics for each of the datasets. This step can take a second to run. Remember, we are creating model fits for 2000 models, which is quite a lot.
+
+
+```{r model-boots}
+fit_model <- function(split) {
+  
+  lm(rating ~ store + gender + log_total + unit_price + store*gender + log_total*unit_price, data = analysis(split))
+  
+}
+
+boot_models <- boot_samps %>% 
+  mutate(
+    model = map(splits, fit_model),
+    coef_info = map(model, tidy)
+    )
+
+boots_coefs <- boot_models %>% 
+  unnest(coef_info)
+
+boots_coefs %>% 
+  select(-c(splits, model)) %>% 
+  head(n = 18) %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"), fixed_thead = TRUE)
+```
+
+The output from `boots_coefs` contains all of the liner model output from each model and is 18,000 rows long. This is because each model has 9 rows (intercept through the interaction variables) and $9*2000 = 18000$. I printed the first two models so we can see an example of what we are looking at. The parameter estimates and p-values are slightly different between each of the models. By taking 2000 samples, we are hoping that we get a good representation of all the possible datasets we could have collected. 
+
+However, the data in this form is not very helpful. Recall the purpose of modeling: we want to use data from a sample (selection of observations) to help predict or describe attributes about a population (full group of observations). Bootstrapping also attempts to do this. We have so many different models from many different datasets and we can use the values from each of the models to create a confidence interval. We can't predict the population values exactly but we can use our 2000 models to get a good guess of where the population values fall. We'll use the following code to generate a 95% confidence interval for each of our parameter estimates (i.e., one interval for the intercept, one for Store B, etc.).
+
+```{r conf-ints}
+boot_int <- int_pctl(boot_models, statistics = coef_info, alpha = 0.05)
+boot_int %>% 
+  kable() %>% 
+  kable_styling(c("striped", "responsive"))
+```
+
+So, for instance, we are 95% confident that if we had built a model on the true population, we would have gotten a paramter value for the log of total of between -0.0579 and 0.490. Similarily, we are 95% confident that if we had built a model on the true population we would have gotten a parameter value for the interaction between Store C and the male gender between -1.06 and -0.00188.
+
+Something to notice here is that nearly all of the intervals include zero. This meanas that zero is a possible value we could have gotten from the population. A value of zero for a coefficient estimate would indicate that the respective variable has zero effect on the response! For instance, an estimate value of zero for Store B would mean that if a customer shopped at Store B, we would predict their transaction rating to not change at all. Essentially, since the intervals contain zero, we can't rule out 0 as a potential value for the true population which means that we can't be confident that any of these variables have much of an effect on `rating`. This certainly contributes to our poor model performance we saw in previous guides.
+
+We can visualize these limits as well.
+
+```{r plot-conf-ints, fig.alt = "Histograms of confidence intervals for the values of all parameters in the model."}
+ggplot(boots_coefs, aes(x = estimate)) +
+  geom_histogram(bins = 30) +
+  facet_wrap( ~ term, scales = "free") +
+  geom_vline(data = boot_int, aes(xintercept = .lower), col = "#099392") +
+  geom_vline(data = boot_int, aes(xintercept = .upper), col = "#099392") +
+  labs(title = "Confidence Intervals for All Parameters in the Model") +
+  my_theme
+```
+
+It is somewhat comforting to notice that 0 is, for many of the variables, at the tails of the distribution and is therefore less likely to obtain. However, it still is in the interval and this forces us to question the reliability of the variables in the dataset and the model as a whole.
+
+All in all, the bootstrapping process has once again produced a model that isn't very good at predicting `rating`. However, this is useful information to us. I have a few takeaways from this:
+
+* `rating` is more complex than just the variables in this dataset
+* The variables in this dataset interact with each other and should not be treated separately
+* We need more data and more variables in order to predict `rating`
+
+All of these points, as well as our results from the previous guides, can be reported to the company to help them plan out future data collection projects and to help understand the complexity and variability of how a customer rates a transaction.
+
+
+# References
+
+<div id = "refs"></div>
 
 
 
 
-https://statisticsbyjim.com/hypothesis-testing/bootstrapping/
+
 
 
 
